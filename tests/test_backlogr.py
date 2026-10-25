@@ -7,7 +7,7 @@ def c(tmp_path):
     return core.connect(str(tmp_path / "t.db"))
 
 def mk(c, **kw):
-    a = dict(title="Research X", owner_bot="Forge", source="via_chukar", actor="Chukar"); a.update(kw)
+    a = dict(title="Research X", owner_bot="Forge", source="via_chukar", actor="Coordinator"); a.update(kw)
     return core.create(c, **a)
 
 def test_create_fields(c):
@@ -57,16 +57,16 @@ def test_list_filters_and_flags(c):
 
 def test_import_and_export(c, tmp_path):
     r = core.bulk_import(c, [dict(title="a", owner_bot="Mint", source="bot_initiated", links=[{"ref":"x","kind":"pr"}]),
-                             dict(title="b", owner_bot="Mint", source="bad")], "Chukar")
+                             dict(title="b", owner_bot="Mint", source="bad")], "Coordinator")
     assert len(r["created"]) == 1 and r["errors"][0]["title"] == "b"
     out = core.export(c, str(tmp_path / "e.json"))
     data = json.load(open(out["path"])); assert data["tasks"][0]["links"][0]["kind"] == "pr"
 
 def test_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "cli.db"))
-    assert cli.main(["--json","new","Buy tee","--owner","Mint","--source","via_chukar","--by","Chukar","--approval"]) == 0
+    assert cli.main(["--json","new","Buy tee","--owner","Mint","--source","via_chukar","--by","Coordinator","--approval"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
-    assert cli.main(["approve", tid, "--by","Mint","--approver","Sean","--source","chat"]) == 0
+    assert cli.main(["approve", tid, "--by","Mint","--approver","Operator","--source","chat"]) == 0
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--link","https://x","--kind","order"]) == 0
     assert cli.main(["done", tid, "--by","Mint","--note","arrived","--evidence","tracking 1Z999"]) == 0
     capsys.readouterr()
@@ -116,7 +116,7 @@ def test_server_requires_token(tmp_path):
 def test_cli_remote(server, tmp_path, monkeypatch, capsys):
     tf = tmp_path / "tok"; tf.write_text(TOK + "\n")
     monkeypatch.setenv("BACKLOGR_URL", server); monkeypatch.setenv("BACKLOGR_TOKEN_FILE", str(tf))
-    assert cli.main(["--json","new","Remote","--owner","Mint","--source","via_chukar","--by","Chukar"]) == 0
+    assert cli.main(["--json","new","Remote","--owner","Mint","--source","via_chukar","--by","Coordinator"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
     assert cli.main(["update", tid, "--by","Mint","--status","blocked","--link","https://x"]) == 0
     capsys.readouterr()
@@ -173,7 +173,7 @@ def test_export_creates_parent_dir(c, tmp_path):
 
 def test_quiet_output(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
-    assert cli.main(["new","Quiet","--owner","Mint","--source","via_chukar","--by","Chukar","--done-means","x"*300]) == 0
+    assert cli.main(["new","Quiet","--owner","Mint","--source","via_chukar","--by","Coordinator","--done-means","x"*300]) == 0
     out = capsys.readouterr().out; tid = out.split()[0]
     assert out == f"{tid} todo\n"
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--note","n"*500]) == 0
@@ -199,7 +199,7 @@ def test_list_real_filters(c, tmp_path, monkeypatch, capsys):
     with pytest.raises(core.TaskError): core.list_tasks(c, status="in_progress,bogus")
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "f.db"))
     for t, o in (("Open PR", "Forge"), ("Docs", "Forge"), ("PR elsewhere", "Mint")):
-        cli.main(["new", t, "--owner", o, "--source", "via_chukar", "--by", "Chukar", "--status", "in_progress"])
+        cli.main(["new", t, "--owner", o, "--source", "via_chukar", "--by", "Coordinator", "--status", "in_progress"])
     capsys.readouterr()
     assert cli.main(["list", "--owner", "Forge", "--status", "in_progress", "--q", "PR"]) == 0
     out = capsys.readouterr().out.splitlines()
@@ -221,7 +221,7 @@ def test_stale_detector(c, tmp_path, monkeypatch, capsys):
     core.update(c, a["id"], "Forge", note="still going")
     assert core.stale(c, hours=2)["count"] == 0
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "s.db"))
-    core.create(core.connect(), "cli old", "Mint", "via_chukar", "Chukar", status="in_progress", created_at=three)
+    core.create(core.connect(), "cli old", "Mint", "via_chukar", "Coordinator", status="in_progress", created_at=three)
     assert cli.main(["stale", "--hours", "2"]) == 0
     out = capsys.readouterr().out
     assert "Mint (1)" in out and "1 stale" in out
@@ -243,8 +243,8 @@ def test_sean_queue(c, tmp_path, monkeypatch, capsys):
     c.execute("UPDATE tasks SET status='waiting_on_sean', ask=NULL WHERE title='not waiting'")
     assert len(core.sean_queue(c)) == 3
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
-    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--status", "waiting_on_sean"]) == 2
-    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--status", "waiting_on_sean", "--ask", "Approve?"]) == 0
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--status", "waiting_on_sean"]) == 2
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--status", "waiting_on_sean", "--ask", "Approve?"]) == 0
     capsys.readouterr()
     assert cli.main(["sean"]) == 0
     out = capsys.readouterr().out; assert "Approve?" in out and "1 waiting on owner" in out
@@ -264,7 +264,7 @@ def test_approval_record(c, tmp_path, monkeypatch, capsys):
     t = mk(c, approval_needed=True)
     with pytest.raises(core.TaskError, match="approval"):
         core.update(c, t["id"], "Forge", status="in_progress")
-    for bot in ("Forge", "chukar", "Mint "):  # owner, an actor seen in the log, and BACKLOGR_BOTS
+    for bot in ("Forge", "coordinator", "Mint "):  # owner, an actor seen in the log, and BACKLOGR_BOTS
         monkeypatch.setenv("BACKLOGR_BOTS", "Mint")
         with pytest.raises(core.TaskError, match="bot"):
             core.update(c, t["id"], "Forge", approved_by=bot, approval_source="relayed")
@@ -274,12 +274,12 @@ def test_approval_record(c, tmp_path, monkeypatch, capsys):
         mk(c, approval_needed=True, status="in_progress", approved_by="Forge", approval_source="x")
     assert core.get(c, t["id"])["approved_by"] is None
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
-    assert cli.main(["approve", t["id"], "--by", "Forge", "--approver", "Sean", "--source", "Sean in Chukar chat 11:17"]) == 0
+    assert cli.main(["approve", t["id"], "--by", "Forge", "--approver", "Operator", "--source", "Operator in chat"]) == 0
     r = core.get(c, t["id"])
-    assert (r["approved_by"], r["approval_source"]) == ("Sean", "Sean in Chukar chat 11:17") and r["approved_at"]
-    assert "approved by Sean" in r["updates"][-1]["note"]
+    assert (r["approved_by"], r["approval_source"]) == ("Operator", "Operator in chat") and r["approved_at"]
+    assert "approved by Operator" in r["updates"][-1]["note"]
     assert core.update(c, t["id"], "Forge", status="in_progress")["status"] == "in_progress"
-    monkeypatch.setenv("BACKLOGR_APPROVERS", "Sean")
+    monkeypatch.setenv("BACKLOGR_APPROVERS", "Operator")
     with pytest.raises(core.TaskError, match="APPROVERS"):
         core.update(c, t["id"], "Forge", approved_by="Bob", approval_source="x")
     monkeypatch.delenv("BACKLOGR_APPROVERS")
@@ -295,16 +295,16 @@ def test_approval_record(c, tmp_path, monkeypatch, capsys):
         core.update(c, w["id"], "Forge", status="done", approval_needed=False)
     with pytest.raises(core.TaskError, match="bot"):
         mk(c, title="self", owner_bot="Nova", approval_needed=True, status="done", approved_by="Nova", approval_source="x")
-    monkeypatch.setenv("BACKLOGR_APPROVERS", "Forge,Sean")
+    monkeypatch.setenv("BACKLOGR_APPROVERS", "Forge,Operator")
     with pytest.raises(core.TaskError, match="bot"):
-        core.update(c, w["id"], "Chukar", approved_by="Forge", approval_source="x")
+        core.update(c, w["id"], "Coordinator", approved_by="Forge", approval_source="x")
     monkeypatch.delenv("BACKLOGR_APPROVERS")
-    core.update(c, w["id"], "Chukar", approved_by="Pat", approval_source="chat")
+    core.update(c, w["id"], "Coordinator", approved_by="Pat", approval_source="chat")
     monkeypatch.setenv("BACKLOGR_BOTS", "Mint,Pat")
     with pytest.raises(core.TaskError, match="bot"):
         core.update(c, w["id"], "Forge", status="in_progress")
     with pytest.raises(core.TaskError, match="approval_source"):
-        core.update(c, w["id"], "Forge", approved_by="Sean")
+        core.update(c, w["id"], "Forge", approved_by="Operator")
     u = mk(c, title="no approval needed")
     assert core.update(c, u["id"], "Forge", status="in_progress")["status"] == "in_progress"
 
@@ -356,35 +356,35 @@ def test_idempotent_create(c, tmp_path, monkeypatch, capsys):
     with pytest.raises(sqlite3.IntegrityError):  # unique index backs the key
         c.execute("UPDATE tasks SET key='forge:pr-12' WHERE id=?", (mk(c, title="other")["id"],))
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
-    args = ["new", "Order printer ink", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--key", "mint:ink"]
+    args = ["new", "Order printer ink", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--key", "mint:ink"]
     assert cli.main(args) == 0; first = capsys.readouterr().out.split()[0]
     assert cli.main(args) == 0; out = capsys.readouterr().out
     assert out == f"{first} todo (existing)\n"
     d = mk(c, title="Order printer ink!")  # no key, near-identical title: created, with a warning
     assert d["id"] != first and any(first in w for w in d["warnings"])
-    assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar"]) == 0
+    assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator"]) == 0
     assert "warning: similar title" in capsys.readouterr().err
     assert "warnings" not in mk(c, title="Something unrelated entirely")
 
 def test_act(c, tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("BACKLOGR_OWNER", "Sean")
+    monkeypatch.setenv("BACKLOGR_OWNER", "Operator")
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
-    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean")
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Operator")
     t = mk(c, title="sample", done_means="unit tests pass", approval_needed=True)
-    # done (CLI, default --by Sean): human word is the evidence and the approval; history records it
+    # done (CLI, default --by Operator): human word is the evidence and the approval; history records it
     assert cli.main(["act", t["id"], "done", "--reason", "looked at it"]) == 0
     assert capsys.readouterr().out == f"{t['id']} done\n"
     r = core.get(c, t["id"])
-    assert r["status"] == "done" and r["approved_by"] == "Sean" and r["evidence"].startswith("confirmed done by Sean")
-    assert r["updates"][-1]["actor"] == "Sean" and r["updates"][-1]["note"].startswith("act done by Sean: looked at it; approved by Sean; evidence:")
+    assert r["status"] == "done" and r["approved_by"] == "Operator" and r["evidence"].startswith("confirmed done by Operator")
+    assert r["updates"][-1]["actor"] == "Operator" and r["updates"][-1]["note"].startswith("act done by Operator: looked at it; approved by Operator; evidence:")
     # undo restores status and approval fields; a second undo has nothing to undo
     assert cli.main(["act", t["id"], "undo"]) == 0
     r = core.get(c, t["id"]); assert r["status"] == "todo" and r["approved_by"] is None and r["evidence"] is None
-    assert r["updates"][-1]["note"] == "act undo of done by Sean: status done -> todo"
+    assert r["updates"][-1]["note"] == "act undo of done by Operator: status done -> todo"
     with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")
     # na -> declined with reason; undo
     assert core.act(c, t["id"], "na", reason="not needed now")["status"] == "declined"
-    assert core.get(c, t["id"])["updates"][-1]["note"] == "act na by Sean: not needed now; status: todo -> declined"
+    assert core.get(c, t["id"])["updates"][-1]["note"] == "act na by Operator: not needed now; status: todo -> declined"
     assert core.act(c, t["id"], "undo")["status"] == "todo"
     # question: status kept, marked for the owner, shown in flags; owner's next update clears it
     with pytest.raises(core.TaskError, match="question"): core.act(c, t["id"], "question")
@@ -394,14 +394,14 @@ def test_act(c, tmp_path, monkeypatch, capsys):
     core.update(c, t["id"], "Forge", note="answer: vendor A")
     assert core.get(c, t["id"])["open_question"] is None
     with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")  # window closed
-    # Sean acting does not make Sean a "bot" for approvals; a bot acting gets the normal gates
-    assert core.update(c, t["id"], "Forge", approved_by="Sean", approval_source="chat")["approved_by"] == "Sean"
+    # Operator acting does not make Operator a "bot" for approvals; a bot acting gets the normal gates
+    assert core.update(c, t["id"], "Forge", approved_by="Operator", approval_source="chat")["approved_by"] == "Operator"
     u = mk(c, title="bot act", done_means="unit tests pass")
     with pytest.raises(core.TaskError, match="tests"): core.act(c, u["id"], "done", by="Forge")
     with pytest.raises(SystemExit): cli.main(["act", t["id"], "bogus"])
 
 def test_act_safety(c, monkeypatch):
-    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean,Bob"); monkeypatch.setenv("BACKLOGR_APPROVERS", "Sean")
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Operator,Bob"); monkeypatch.setenv("BACKLOGR_APPROVERS", "Operator")
     t = mk(c, title="gated", done_means="unit tests pass", approval_needed=True)
     # not an allowed approver -> normal gates
     with pytest.raises(core.TaskError): core.act(c, t["id"], "done", by="Bob")
@@ -412,10 +412,10 @@ def test_act_safety(c, monkeypatch):
     core.act(c, t["id"], "na", reason="x")
     seq = core._last_seq(c, t["id"]); core.update(c, t["id"], "Forge", note="concurrent")
     with pytest.raises(core.TaskError, match="changed"):
-        core.update(c, t["id"], "Sean", status="todo", _extra={"last_act": None}, _expect=seq)
+        core.update(c, t["id"], "Operator", status="todo", _extra={"last_act": None}, _expect=seq)
 
 def test_act_undo_after_link_refused(c, monkeypatch):
-    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean")
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Operator")
     t = mk(c, title="linked")
     core.act(c, t["id"], "done")
     core.add_link(c, t["id"], "Forge", "https://example.com/pr/1", "pr")

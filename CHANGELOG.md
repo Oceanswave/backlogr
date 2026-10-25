@@ -2,6 +2,11 @@
 
 All notable changes. Versions follow semantic versioning.
 
+## Unreleased
+
+- Document disposable agent installation, contribution/CI workflow, private security reporting, architecture/schema, and all environment variables; link guides from README and AGENTS.
+- Align the agent skill with CLI/MCP behavior and replace personal deployment examples with generic placeholders while retaining compatibility identifiers and license attribution.
+
 ## 1.4.0
 
 - Configure the owner name and default `act` actor with `BACKLOGR_OWNER` (default `owner`).

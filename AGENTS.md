@@ -6,3 +6,8 @@ Backlogr is a task system of record for AI agents. Rule: **no task, no work.**
 - **Connect:** add the MCP server `backlogr` at `$BACKLOGR_URL/mcp` with header `Authorization: Bearer $BACKLOGR_TOKEN` ([README → Install the MCP](README.md#install-the-mcp)). Never commit or print the token.
 - **Develop:** `python3 -m venv .venv && .venv/bin/pip install -e '.[test]' && .venv/bin/python -m pytest -q tests`. Keep the MCP tool verbs (`task_*`) stable. Env vars use the `BACKLOGR_` prefix. No hostnames, IPs, tokens or personal paths in the repo.
 - **Operate/migrate:** see [`MIGRATION.md`](MIGRATION.md) and `deploy/`.
+
+- **Install:** [copy-paste agent setup](INSTALL_FOR_AGENTS.md) (temporary clone, venv, and DB).
+- **Contribute:** [development, PR flow, and CI](CONTRIBUTING.md).
+- **Security:** [private reporting and threat model](SECURITY.md).
+- **Understand/configure:** [architecture and schema](docs/ARCHITECTURE.md), [all environment variables](docs/CONFIGURATION.md).

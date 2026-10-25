@@ -41,11 +41,11 @@ CREATE INDEX IF NOT EXISTS t_owner ON tasks(owner_bot);
 # Columns added after 1.0.0. connect() adds any that are missing (ALTER TABLE ADD COLUMN), so
 # restarting the server migrates an old DB in place. Never remove or rename a column here.
 ADDED_COLUMNS = [
-    ("ask", "TEXT"),            # exact one-line ask for Sean while waiting_on_sean
+    ("ask", "TEXT"),            # exact one-line ask for the owner while waiting_on_sean
     ("waiting_since", "TEXT"),  # when the row last entered waiting_on_sean
     ("approved_by", "TEXT"),    # the human who approved (never a bot)
     ("approved_at", "TEXT"),    # when they approved
-    ("approval_source", "TEXT"),  # where, e.g. "Sean in Chukar chat 11:17"
+    ("approval_source", "TEXT"),  # where, e.g. "Operator in chat"
     ("evidence", "TEXT"),       # what proves done: link, sha, path or command output summary
     ("test_results", "TEXT"),   # JSON {test name: "pass"|"fail"} when done_means mentions tests
     ("key", "TEXT"),            # caller's stable idempotency key; unique when set
@@ -384,7 +384,7 @@ def short(t):
     return s
 
 def sean_queue(c, ref=None):
-    """Everything waiting on Sean, oldest first, each with its exact ask and age in hours."""
+    """Everything waiting on the owner, oldest first, each with its exact ask and age in hours."""
     ref = ref or dt.datetime.now().astimezone()
     out = []
     for r in c.execute("SELECT * FROM tasks WHERE status='waiting_on_sean'"):

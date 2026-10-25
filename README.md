@@ -3,15 +3,23 @@
 A small, self-hosted system of record for a team of AI agents' work (research, purchases, edits, outreach, code). Agents talk to it over MCP or a CLI. Tasks are the objects; the MCP tool verbs are `task_*`. Rule: **no task, no work.**
 
 - Python, SQLite (WAL), append-only update log enforced by triggers.
-- MCP over streamable HTTP (or stdio), plus a JSON API used by the CLI. Bearer-token auth on everything except `/healthz`.
+- MCP over streamable HTTP (or stdio), plus a JSON API used by the CLI. Bearer-token auth on API/MCP; `/healthz` is unauthenticated and optional `/act` links authorize via a separate signature.
 - Nightly JSON export and SQLite backup inside the service.
+
+## Documentation
+
+- [Agent installation: disposable clone, venv, and smoke check](INSTALL_FOR_AGENTS.md)
+- [Contributing and CI](CONTRIBUTING.md)
+- [Security policy and threat model](SECURITY.md)
+- [Architecture and schema](docs/ARCHITECTURE.md)
+- [Complete configuration reference](docs/CONFIGURATION.md)
 
 ## Rule for every agent (paste verbatim)
 > **No task, no work: before you start anything for the user, create or find its task in Backlogr (`task_create` / `backlogr new`), and record every status change, blocker and result on that task (`task_update` / `backlogr update`, `backlogr done`) as it happens, using your bot name as the actor.**
 
 ## Run the server
 ```
-git clone https://github.com/Oceanswave/backlogr.git ~/backlogr && cd ~/backlogr
+git clone '<repo-url>' ~/backlogr && cd ~/backlogr
 python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
 mkdir -p data backups exports && chmod 700 data backups exports
 cp deploy/env.example .env && chmod 600 .env    # fill in BACKLOGR_TOKEN etc.
@@ -20,23 +28,26 @@ curl -fsS http://127.0.0.1:8796/healthz         # ok
 ```
 As a systemd user service: `install -D -m 644 deploy/backlogr.service ~/.config/systemd/user/backlogr.service && systemctl --user daemon-reload && systemctl --user enable --now backlogr` (and `loginctl enable-linger $USER` to start at boot).
 
-Expose it only on a private network or behind an authenticating reverse proxy, for example Tailscale serve under a path: `tailscale serve --bg --https=443 --set-path /backlogr http://127.0.0.1:8796`, then `BACKLOGR_URL=https://<your-host>.<your-tailnet>.ts.net/backlogr`. Add that host name to `BACKLOGR_ALLOWED_HOSTS`. Routes: `$BACKLOGR_URL/mcp`, `$BACKLOGR_URL/healthz`, `$BACKLOGR_URL/api/<op>`.
+Expose it only on a private network or behind an authenticating reverse proxy, for example Tailscale serve under a path: `tailscale serve --bg --https=443 --set-path /backlogr http://127.0.0.1:8796`, then `BACKLOGR_URL=https://backlogr.example.invalid/backlogr`. Add that host name to `BACKLOGR_ALLOWED_HOSTS` for MCP transport checks; enforce Host restrictions for all routes at the proxy. Use TLS and authentication before any public exposure. Routes: `$BACKLOGR_URL/mcp`, `$BACKLOGR_URL/healthz`, `$BACKLOGR_URL/api/<op>`.
 
 ## Configuration
+
+See the [complete reference](docs/CONFIGURATION.md) for all environment variables, including signed links and deployment settings.
+
 | Variable | Used by | Default |
 |---|---|---|
 | `BACKLOGR_TOKEN` | server (required for HTTP) | none |
 | `BACKLOGR_DB` | server, local CLI | `~/backlogr/data/backlogr.db` |
 | `BACKLOGR_PORT` | server | `8796` |
 | `BACKLOGR_HOSTS` | server bind IPs (comma list) | `127.0.0.1` |
-| `BACKLOGR_ALLOWED_HOSTS` | extra accepted Host headers (proxy DNS names) | none |
+| `BACKLOGR_ALLOWED_HOSTS` | extra MCP Host headers (proxy DNS names) | none |
 | `BACKLOGR_BACKUP_DIR` / `BACKLOGR_BACKUP_KEEP` | nightly backup (`backlogr-YYYY-MM-DD.db`) | off / `14` |
 | `BACKLOGR_EXPORT` | nightly export, CLI `export` | `~/backlogr/exports/backlogr-export.json` |
 | `BACKLOGR_URL` | CLI remote mode (and client configs below) | unset = local DB |
 | `BACKLOGR_TOKEN_FILE` | CLI remote mode | `~/backlogr/.token` |
 | `BACKLOGR_OWNER` | name in messages and default person for `act` (server and CLI) | `owner` |
 | `BACKLOGR_HUMANS` | people whose `act done` attestation can satisfy completion gates | unset |
-| `BACKLOGR_BOTS` | bot names that can never be `approved_by` (owners and actors in the DB are always included) | none |
+| `BACKLOGR_BOTS` | bot names that can never be `approved_by` (DB owners/actors are included, except configured humans) | none |
 | `BACKLOGR_APPROVERS` | if set, the only names accepted as `approved_by` | unset |
 
 ## Install the MCP
@@ -68,29 +79,29 @@ Server name `backlogr`, streamable HTTP at `$BACKLOGR_URL/mcp`, header `Authoriz
 ## Install the skill
 The agent skill is [`skills/backlogr/SKILL.md`](skills/backlogr/SKILL.md) (CLI, MCP tools, status flow, rules). Copy or symlink the folder into your agent's skills directory:
 ```
-git clone https://github.com/Oceanswave/backlogr.git ~/src/backlogr
+git clone '<repo-url>' ~/src/backlogr
 ln -s ~/src/backlogr/skills/backlogr ~/.claude/skills/backlogr     # Claude Code
 ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 ```
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import.
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import, task_act, task_link.
 Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, ask (required when moving to waiting_on_sean), waiting_since, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
 Remote when `BACKLOGR_URL` is set (token from `BACKLOGR_TOKEN_FILE`), else the local DB (`BACKLOGR_DB`).
 ```
-backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives" --due 2026-10-30 --approval --key mint:sample-tee   # --key: retries return the same task
+backlogr new "Order sample tee" --owner Mint --source via_chukar --by Coordinator --done-means "tee arrives" --due 2026-10-30 --approval --key mint:sample-tee   # --key: retries return the same task
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --evidence "https://example.com/pr/12" --test unit=pass --test e2e=pass   # --evidence required; --test when done_means mentions tests
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all] [--limit 50] [--offset 0]
 backlogr flags [--stale 24] [--recent 24]
 backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
-backlogr approve T-id --by Forge --approver Sean --source "Sean in chat 11:17"   # human approval record
+backlogr approve T-id --by Forge --approver Operator --source "Operator in chat 11:17"   # human approval record
 backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
-backlogr get T-abc123 [--short]      backlogr import file.json --by Chukar      backlogr export [--path P]
+backlogr get T-abc123 [--short]      backlogr import file.json --by Coordinator      backlogr export [--path P]
 ```
 `new`, `update` and `done` print one line (`T-abc123 in_progress`); add `--json` (before or after the subcommand) for the full row. Other commands print a readable summary or JSON with `--json`.
 
@@ -115,7 +126,7 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 `.venv/bin/python -m pytest -q tests` (unit, CLI local + remote, auth 401s, live MCP HTTP end-to-end). `ensure.sh` health-checks `$BACKLOGR_URL`. Migrating from the earlier "task manager" deployment: [MIGRATION.md](MIGRATION.md).
 
 ## License
-[MIT](LICENSE) © 2026 Sean McLellan / BaristaLabs
+[MIT](LICENSE) (see license for copyright attribution)
 
 ## Diagnostics and restore
 
@@ -127,13 +138,14 @@ List pagination is optional: `--limit N --offset N` (MCP/API: `limit`, `offset`)
 
 ## One-call human actions (`act`)
 
-`backlogr act T-id done|na|question|undo [--reason TEXT] [--by NAME]` (MCP: `task_act`, API op `act`). `--by` defaults to `BACKLOGR_OWNER` (`owner` when unset). Set `BACKLOGR_OWNER=Sean` on the server and CLI clients to retain that name.
+`backlogr act T-id done|na|question|later|undo [--reason TEXT] [--by NAME]` (MCP: `task_act`, API op `act`). `--by` defaults to `BACKLOGR_OWNER` (`owner` when unset). Set `BACKLOGR_OWNER=Operator` on the server and CLI clients to retain that name.
 
 | action | effect |
 |---|---|
 | `done` | status `done`, with evidence `confirmed done by <by>[: reason]`. If `<by>` is listed in `BACKLOGR_HUMANS` (and in `BACKLOGR_APPROVERS`, when that is set), their word counts: the tests gate is skipped, and a missing approval is recorded as `<by> via act done`. Anyone else goes through the normal gates. |
 | `na` | status `declined`, with the reason in the note |
 | `question` | status unchanged. `--reason` is the question; it is stored in `open_question` and listed under `flags.questions_for_owner`, and it clears on the owner bot's next update |
+| `later` | adds a note without changing status; `--reason` is required |
 | `undo` | restores status, evidence, approval, tests and question to what they were before the last act. This works only if nothing else changed the task since. |
 
 Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API accepts only the parameters exposed by the corresponding MCP tool; unknown fields return HTTP 400 (`unknown field: x`). Request bodies over 1 MiB return HTTP 413.
@@ -146,9 +158,8 @@ Set `BACKLOGR_LINK_SECRET` to a separate random secret; it is never derived from
 `BACKLOGR_TOKEN`. Set `BACKLOGR_PUBLIC_URL` to the public base URL, including
 any proxy path. Without the link secret, minting and `/act` are disabled.
 `BACKLOGR_LINK_TTL` sets the default lifetime in seconds (604800, or seven days).
-`BACKLOGR_LINK_ACTOR` sets the recorded actor (default `owner`). The live
-deployment sets `BACKLOGR_LINK_ACTOR=Sean` and `BACKLOGR_HUMANS=Sean` so the
-existing human action rules apply.
+`BACKLOGR_LINK_ACTOR` sets the recorded actor (default `owner`). For human attestation, configure `BACKLOGR_LINK_ACTOR=Operator` and `BACKLOGR_HUMANS=Operator` so the
+configured human action rules apply.
 
 Mint locally with the secret and public URL set, or remotely with the usual
 CLI connection settings:

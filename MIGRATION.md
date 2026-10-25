@@ -7,7 +7,7 @@ OLD=~/task-manager          # old install dir (unit task-manager.service, serve 
 NEW=~/backlogr
 OLD_PORT=<old port>         # e.g. 8795
 NEW_PORT=8796
-HOST=<your-host.your-tailnet.ts.net>
+HOST=backlogr.example.invalid
 REV=<release tag or merge sha>
 ```
 
@@ -24,7 +24,7 @@ Env renames (old names are ignored, no aliases): `TASKS_TOKEN`→`BACKLOGR_TOKEN
 
 ## 1. Install side by side (old service keeps running)
 ```
-git clone https://github.com/Oceanswave/backlogr.git "$NEW" && cd "$NEW" && git checkout "$REV"
+git clone '<repo-url>' "$NEW" && cd "$NEW" && git checkout "$REV"
 python3 -m venv .venv && .venv/bin/pip install -q -e '.[test]' && .venv/bin/python -m pytest -q tests
 mkdir -p data backups exports && chmod 700 data backups exports
 install -m 600 "$OLD/.token" "$NEW/.token"      # same token: clients only change URL
@@ -90,14 +90,14 @@ Additive: the nullable columns `open_question` and `last_act` are added automati
 Restarting creates the `used_links` table automatically; existing tasks and
 history stay in place. Configure `BACKLOGR_LINK_SECRET` separately from the API
 token and set `BACKLOGR_PUBLIC_URL` to the base URL including the proxy path.
-Links stay disabled without the secret. Set `BACKLOGR_LINK_ACTOR=Sean` and
-`BACKLOGR_HUMANS=Sean` on the live deployment; the link actor otherwise defaults
+Links stay disabled without the secret. Set `BACKLOGR_LINK_ACTOR=Operator` and
+`BACKLOGR_HUMANS=Operator` on the deployment; the link actor otherwise defaults
 to `owner`. Optionally set `BACKLOGR_LINK_TTL` (seconds; default seven days).
 Ensure the proxy forwards GET and POST on `/act`. Keep access private.
 
 ## v1.4.0
 
-Set `BACKLOGR_OWNER` to the person's name on the server and CLI clients; it defaults to `owner`. Existing installations using Sean should set `BACKLOGR_OWNER=Sean`. This changes message text and the default actor for `act`, while keeping statuses, `sean`, `task_sean`, and source values. `BACKLOGR_HUMANS` and `BACKLOGR_APPROVERS` retain their existing meaning.
+Set `BACKLOGR_OWNER` to the person's name on the server and CLI clients; it defaults to `owner`. Set it consistently to the existing operator name when upgrading. This changes message text and the default actor for `act`, while keeping statuses, `sean`, `task_sean`, and source values. `BACKLOGR_HUMANS` and `BACKLOGR_APPROVERS` retain their existing meaning.
 
 API callers must send only parameters exposed by the corresponding MCP tool. Unknown fields now return 400, including fields starting with `_`. Import items may still carry IDs and timestamps. API bodies larger than 1 MiB return 413; split larger imports into smaller batches or use the local CLI.
 

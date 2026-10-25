@@ -30,7 +30,7 @@ def api(db, monkeypatch):
         client.close()
 
 
-@pytest.mark.parametrize('name', ['owner', 'Sean', 'Pat'])
+@pytest.mark.parametrize('name', ['owner', 'Operator', 'Pat'])
 def test_owner_defaults(db, api, monkeypatch, capsys, name):
     monkeypatch.delenv('BACKLOGR_OWNER', raising=False)
     if name != 'owner': monkeypatch.setenv('BACKLOGR_OWNER', name)
