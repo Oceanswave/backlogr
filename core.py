@@ -1,5 +1,5 @@
 """Backlogr core: SQLite system of record for all bot work."""
-import json, os, re, sqlite3, uuid, datetime as dt
+import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 
 DB_PATH = os.environ.get("BACKLOGR_DB", os.path.expanduser("~/backlogr/data/backlogr.db"))
@@ -38,7 +38,9 @@ ADDED_COLUMNS = [
     ("approval_source", "TEXT"),  # where, e.g. "Sean in Chukar chat 11:17"
     ("evidence", "TEXT"),       # what proves done: link, sha, path or command output summary
     ("test_results", "TEXT"),   # JSON {test name: "pass"|"fail"} when done_means mentions tests
+    ("key", "TEXT"),            # caller's stable idempotency key; unique when set
 ]
+SIMILAR = 0.8  # title similarity above this triggers a duplicate warning on create
 
 def _migrate(c):
     have = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
@@ -47,6 +49,7 @@ def _migrate(c):
             try: c.execute(f"ALTER TABLE tasks ADD COLUMN {name} {typ}")
             except sqlite3.OperationalError as e:
                 if "duplicate column" not in str(e): raise
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS t_key ON tasks(key) WHERE key IS NOT NULL")
 
 def now():
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -144,17 +147,33 @@ def _tests_note(tests):
     p = sum(v == "pass" for v in tests.values())
     return [f"tests: {p} pass, {len(tests) - p} fail" + "".join(f"; FAIL {k}" for k, v in tests.items() if v == "fail")]
 
+def similar(c, title, exclude=None, threshold=SIMILAR):
+    """Open tasks whose title is more than `threshold` similar to `title` (difflib ratio, case-insensitive)."""
+    t = (title or "").strip().lower(); out = []
+    for r in c.execute(f"SELECT id, title FROM tasks WHERE status IN ({','.join('?'*len(OPEN))})", OPEN):
+        if r["id"] == exclude: continue
+        score = difflib.SequenceMatcher(None, t, r["title"].strip().lower()).ratio()
+        if score > threshold: out.append(dict(id=r["id"], title=r["title"], similarity=round(score, 2)))
+    return sorted(out, key=lambda x: -x["similarity"])
+
 def create(c, title, owner_bot, source, actor, done_means="", due=None, status="todo",
            approval_needed=False, note=None, links=None, created_at=None, id=None, ask=None,
-           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None):
+           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None, key=None):
+    """Create a task. With `key`, an existing row with that key is returned unchanged (existing=True).
+    The result carries `warnings` when open tasks have a title more than SIMILAR alike."""
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
     _check(status, source, due)
     if status == "waiting_on_sean": _need_ask(ask)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
-    ts = created_at or now()
+    ts = created_at or now(); key = (key or "").strip() or None
     c.execute("BEGIN IMMEDIATE")
     try:
+        if key:
+            hit = c.execute("SELECT id FROM tasks WHERE key=?", (key,)).fetchone()
+            if hit:
+                c.execute("COMMIT"); r = get(c, hit["id"]); r["existing"] = True; return r
+        dupes = similar(c, title)
         if approved_by is not None or approval_source:
             approved_by, approval_source = _approval(c, approved_by, approval_source, actor, owner_bot)
         _gate(c, status, approval_needed, approved_by, actor, owner_bot)
@@ -165,7 +184,7 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
                    ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None,
                    approved_by=approved_by, approved_at=(approved_at or ts) if approved_by else None,
                    approval_source=approval_source if approved_by else None,
-                   evidence=evidence, test_results=json.dumps(tests) if tests else None)
+                   evidence=evidence, test_results=json.dumps(tests) if tests else None, key=key)
         c.execute(f"INSERT INTO tasks({','.join(row)}) VALUES({','.join('?'*len(row))})", tuple(row.values()))
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)",
                   (tid, ts, actor, note or f"created ({status})"))
@@ -175,7 +194,9 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
         c.execute("COMMIT")
     except Exception:
         c.execute("ROLLBACK"); raise
-    return get(c, tid)
+    r = get(c, tid); r["existing"] = False
+    if dupes: r["warnings"] = [f"similar title: {d['id']} {d['title']!r} ({d['similarity']})" for d in dupes]
+    return r
 
 def _require(c, tid):
     if not c.execute("SELECT 1 FROM tasks WHERE id=?", (tid,)).fetchone():

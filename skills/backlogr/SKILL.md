@@ -24,12 +24,13 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 3. **Notes:** every meaningful step gets a short `note` (what changed, what's next). The log is append-only; correct mistakes with a new note.
 4. **Approvals:** if the work needs the user's OK (spend, send, publish, delete, merge to production), set `approval_needed` and status `waiting_on_sean` until you have it, then record it with `backlogr approve T-id --by <you> --approver Sean --source "Sean in Chukar chat 11:17"` (or `approved_by` + `approval_source` on `task_update`). An `approval_needed` task cannot move to `in_progress` or `done` without it, and a bot name is never accepted as the approver: bot-relayed approval never counts.
 5. **Evidence:** attach links for results (`kind`: pr, doc, order, message, page, file, other). `done` requires `evidence` (link, commit sha, path or command output summary); when `done_means` mentions tests, also record each test as pass or fail (`--test name=pass|fail`, or `test_results` on `task_update`).
-6. Always pass `actor` = your bot name.
+6. **No duplicates, no invented ids:** create with a stable `key` (e.g. `forge:pr-12-review`) and use only ids Backlogr returns. A similar-title warning means look at that task first.
+7. Always pass `actor` = your bot name.
 
 ## MCP tools
 | Tool | Use |
 |---|---|
-| `task_create(title, owner_bot, source, actor, done_means?, due?, status?, approval_needed?, note?)` | new task |
+| `task_create(title, owner_bot, source, actor, done_means?, due?, status?, approval_needed?, note?, ask?, key?)` | new task; pass a stable `key` so a retry returns the same task (`existing: true`); heed any similar-title `warnings` |
 | `task_update(id, actor, status?, due?, owner_bot?, note?, approval_needed?, ask?, approved_by?, approval_source?)` | change fields and/or append a note |
 | `task_add_link(id, actor, ref, kind?)` | attach evidence |
 | `task_get(id)` | full task with log and links |
@@ -41,7 +42,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 
 ## CLI
 ```
-backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives" --due 2026-10-30 --approval
+backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives" --due 2026-10-30 --approval --key mint:sample-tee   # --key: retries return the same task
 backlogr update T-abc123 --by Mint --status in_progress --note "started"
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/pr/1 --kind pr

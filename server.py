@@ -28,11 +28,12 @@ def task_create(title: str, owner_bot: str, source: str, actor: str, done_means:
                 due: Optional[str] = None, status: str = "todo", approval_needed: bool = False,
                 note: Optional[str] = None, ask: Optional[str] = None,
                 approved_by: Optional[str] = None, approval_source: Optional[str] = None,
-                evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None) -> dict:
-    """Create a task. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
+                evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None,
+                key: Optional[str] = None) -> dict:
+    """Create a task. key: a stable idempotency key (e.g. "forge:pr-12-review"); if a task already has it, that task is returned unchanged with existing=true, so retries never duplicate. The result has warnings when an open task has a very similar title: check it before carrying on. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
     return core.create(_c(), title=title, owner_bot=owner_bot, source=source, actor=actor,
                        done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask,
-                       approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results)
+                       approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results, key=key)
 
 @mcp.tool()
 def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional[str] = None,

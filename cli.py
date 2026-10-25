@@ -55,6 +55,7 @@ def main(argv=None):
     n.add_argument("--done-means", default=""); n.add_argument("--due"); n.add_argument("--status", default="todo", choices=core.STATUSES)
     n.add_argument("--approval", action="store_true"); n.add_argument("--note")
     n.add_argument("--ask", help="required with --status waiting_on_sean: exactly what Sean must decide or do")
+    n.add_argument("--key", help="stable idempotency key: if a task has it, return that task instead of creating one")
     n.add_argument("--evidence", help="required with --status done"); n.add_argument("--test", action="append", metavar="NAME=pass|fail")
     u = s.add_parser("update"); u.add_argument("id"); u.add_argument("--by", required=True)
     u.add_argument("--status", choices=core.STATUSES); u.add_argument("--due"); u.add_argument("--owner"); u.add_argument("--note")
@@ -82,7 +83,8 @@ def main(argv=None):
     try:
         if a.cmd == "new":
             r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note, ask=a.ask,
-                         **({"evidence": a.evidence} if a.evidence else {}), **({"test_results": a.test} if a.test else {}))
+                         **({"evidence": a.evidence} if a.evidence else {}), **({"test_results": a.test} if a.test else {}),
+                         **({"key": a.key} if a.key else {}))
         elif a.cmd == "update":
             r = None
             if a.link: r = B.add_link(c, a.id, a.by, a.link, a.kind)
@@ -104,6 +106,7 @@ def main(argv=None):
         elif a.cmd == "export": r = B.export(c, a.path)
     except core.TaskError as e:
         print(f"error: {e}", file=sys.stderr); return 2
+    for w in (r.get("warnings") or []) if isinstance(r, dict) else []: print(f"warning: {w}", file=sys.stderr)
     if a.json: print(json.dumps(r, indent=1)); return 0
     if a.cmd == "get" and a.short:
         print(core.short(r))
@@ -123,7 +126,7 @@ def main(argv=None):
             print(f"{k}: {len(r[k])}")
             for t in r[k]: print(f"  {t['id']}  {t['owner_bot']}: {t['title']}")
     elif a.cmd in ("new", "update", "done", "approve"):
-        print(f"{r['id']} {r['status']}")  # quiet by default; --json for the full row
+        print(f"{r['id']} {r['status']}" + (" (existing)" if r.get("existing") else ""))  # quiet by default; --json for the full row
     else:
         print(json.dumps(r, indent=1))
     return 0

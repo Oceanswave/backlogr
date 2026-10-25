@@ -329,3 +329,21 @@ def test_done_evidence_review_cases(c, tmp_path, monkeypatch, capsys):
     u = mk(c, done_means="unit tests pass")  # staged: evidence and results first, then done
     core.update(c, u["id"], "Forge", evidence="sha 1", test_results={"unit": "pass"})
     assert core.update(c, u["id"], "Forge", status="done")["status"] == "done"
+
+def test_idempotent_create(c, tmp_path, monkeypatch, capsys):
+    a = mk(c, title="Review PR 12", key="forge:pr-12")
+    b = mk(c, title="Review PR 12 again", key="forge:pr-12")
+    assert a["id"] == b["id"] and b["existing"] and not a["existing"]
+    assert c.execute("SELECT count(*) FROM tasks").fetchone()[0] == 1
+    with pytest.raises(sqlite3.IntegrityError):  # unique index backs the key
+        c.execute("UPDATE tasks SET key='forge:pr-12' WHERE id=?", (mk(c, title="other")["id"],))
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
+    args = ["new", "Order printer ink", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--key", "mint:ink"]
+    assert cli.main(args) == 0; first = capsys.readouterr().out.split()[0]
+    assert cli.main(args) == 0; out = capsys.readouterr().out
+    assert out == f"{first} todo (existing)\n"
+    d = mk(c, title="Order printer ink!")  # no key, near-identical title: created, with a warning
+    assert d["id"] != first and any(first in w for w in d["warnings"])
+    assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar"]) == 0
+    assert "warning: similar title" in capsys.readouterr().err
+    assert "warnings" not in mk(c, title="Something unrelated entirely")
