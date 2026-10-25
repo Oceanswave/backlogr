@@ -2,6 +2,10 @@
 import argparse, json, os, sys, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core
+import stat, sqlite3
+from http.client import HTTPException
+from pathlib import Path
+from contextlib import closing
 
 class Remote:
     """Mirrors the core.* calls used below over the authed /api/ endpoints."""
@@ -22,12 +26,12 @@ class Remote:
     def update(self, c, tid, actor, **kw): return self._call("update", id=tid, actor=actor, **kw)
     def add_link(self, c, tid, actor, ref, kind="other"): return self._call("add_link", id=tid, actor=actor, ref=ref, kind=kind)
     def get(self, c, tid): return self._call("get", id=tid)
-    def list_tasks(self, c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, due_before=None, q=None, source=None):
+    def list_tasks(self, c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, due_before=None, q=None, source=None, limit=None, offset=0):
         return self._call("list", owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed,
-                          due_before=due_before, q=q, source=source)
+                          due_before=due_before, q=q, source=source, limit=limit, offset=offset)
     def flags(self, c, stale_hours=24, created_within_hours=24):
         return self._call("flags", stale_hours=stale_hours, created_within_hours=created_within_hours)
-    def act(self, c, tid, action, by="Sean", reason=None): return self._call("act", id=tid, action=action, by=by, reason=reason)
+    def act(self, c, tid, action, by=None, reason=None): return self._call("act", id=tid, action=action, by=by, reason=reason)
     def sign_link(self, task, action, ttl_seconds=None): return self._call("link", id=task, action=action, ttl_seconds=ttl_seconds)
     def sean_queue(self, c): return self._call("sean")
     def stale(self, c, hours=2): return self._call("stale", hours=hours)
@@ -42,10 +46,58 @@ def backend():
     url = os.environ.get("BACKLOGR_URL")
     if not url: return core, core.connect()
     tf = os.environ.get("BACKLOGR_TOKEN_FILE", os.path.expanduser("~/backlogr/.token"))
-    return Remote(url, open(tf).read().strip()), None
+    with open(tf) as f: token = f.read().strip()
+    return Remote(url, token), None
+
+def doctor():
+    url = os.environ.get("BACKLOGR_URL")
+    tf = Path(os.environ.get("BACKLOGR_TOKEN_FILE", os.path.expanduser("~/backlogr/.token")))
+    print(f"version: {core.__version__}")
+    print(f"owner: {core.owner()}")
+    print(f"mode: {'remote' if url else 'local'}")
+    ok = True
+    token = os.environ.get("BACKLOGR_TOKEN", "")
+    try:
+        mode = stat.S_IMODE(tf.stat().st_mode)
+        with tf.open() as f: token = f.read().strip()
+        print(f"token file: mode {mode:03o}; token {'set' if token else 'unset'}")
+        if url and (mode != 0o600 or not token): ok = False
+    except OSError:
+        print(f"token file: unavailable; environment token {'set' if token else 'unset'}")
+        if url: ok = False
+    try:
+        if url:
+            print(f"URL: {url}")
+            with urllib.request.urlopen(url.rstrip('/') + '/healthz', timeout=20) as r:
+                if r.status != 200: raise core.TaskError("healthz failed")
+            print("healthz: OK")
+            B, _ = backend()
+            B.list_tasks(None, limit=1)
+            print("authenticated list: OK")
+        else:
+            path = Path(core.DB_PATH)
+            print(f"DB: {path}")
+            if path.exists() and (not path.stat().st_mode & 0o222 or not os.access(path, os.W_OK)):
+                raise core.TaskError("DB is not writable")
+            with closing(core.connect()) as c:
+                c.execute("BEGIN IMMEDIATE")
+                c.execute("ROLLBACK")
+                columns = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
+                required = {"id", "title", "done_means", "owner_bot", "due", "status", "source", "approval_needed", "created_at", "updated_at"} | {n for n, _ in core.ADDED_COLUMNS}
+                if not required <= columns: raise core.TaskError("schema columns missing")
+                version = c.execute("PRAGMA user_version").fetchone()[0]
+                if version != core.SCHEMA_VERSION: raise core.TaskError("schema version mismatch")
+                for table, fields in (("updates", {"seq", "task_id", "ts", "actor", "note"}), ("links", {"seq", "task_id", "ts", "ref", "kind"})):
+                    if not fields <= {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+                        raise core.TaskError(f"schema columns missing: {table}")
+            print(f"DB writable: OK; schema version {version}, columns: OK")
+    except (core.TaskError, OSError, ValueError, sqlite3.Error, HTTPException) as e:
+        print(f"error: {e}", file=sys.stderr); ok = False
+    return 0 if ok else 1
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="backlogr", description="Backlogr CLI (no task, no work).")
+    p.add_argument("--version", action="version", version=core.__version__)
     p.add_argument("--json", action="store_true", help="JSON output")
     s = p.add_subparsers(dest="cmd", required=True)
     jp = argparse.ArgumentParser(add_help=False)
@@ -56,7 +108,7 @@ def main(argv=None):
     n.add_argument("--source", required=True, choices=core.SOURCES); n.add_argument("--by", required=True, help="actor bot")
     n.add_argument("--done-means", default=""); n.add_argument("--due"); n.add_argument("--status", default="todo", choices=core.STATUSES)
     n.add_argument("--approval", action="store_true"); n.add_argument("--note")
-    n.add_argument("--ask", help="required with --status waiting_on_sean: exactly what Sean must decide or do")
+    n.add_argument("--ask", help=f"required with --status waiting_on_sean: exactly what {core.owner()} must decide or do")
     n.add_argument("--key", help="stable idempotency key: if a task has it, return that task instead of creating one")
     n.add_argument("--evidence", help="required with --status done"); n.add_argument("--test", action="append", metavar="NAME=pass|fail")
     u = s.add_parser("update"); u.add_argument("id"); u.add_argument("--by", required=True)
@@ -67,7 +119,7 @@ def main(argv=None):
     ac = s.add_parser("act", help="one-call human action: done | na | question | later | undo (dashboard buttons)")
     ac.add_argument("id"); ac.add_argument("action", choices=core.ACTS)
     ac.add_argument("--reason", help="N/A reason, question/note text (required for question/later), or a done note")
-    ac.add_argument("--by", default="Sean", help="the person acting (default Sean)")
+    ac.add_argument("--by", default=core.owner(), help="the person acting (default BACKLOGR_OWNER)")
     lk = s.add_parser("link", help="mint a single-use action link")
     lk.add_argument("id"); lk.add_argument("--ttl", type=int)
     group = lk.add_mutually_exclusive_group(required=True)
@@ -75,7 +127,7 @@ def main(argv=None):
     ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
     ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
     ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
-    ap.add_argument("--source", required=True, help='where, e.g. "Sean in Chukar chat 11:17"')
+    ap.add_argument("--source", required=True, help=f'where, e.g. "{core.owner()} in chat"')
     d = s.add_parser("done"); d.add_argument("id"); d.add_argument("--by", required=True); d.add_argument("--note"); d.add_argument("--link"); d.add_argument("--kind", default="other")
     d.add_argument("--evidence", required=True, help="link, commit sha, path or command output summary")
     d.add_argument("--test", action="append", metavar="NAME=pass|fail", help="per-test result; required when done_means mentions tests")
@@ -84,13 +136,21 @@ def main(argv=None):
     l.add_argument("--overdue", action="store_true"); l.add_argument("--stale", "--stale-hours", dest="stale", type=float, metavar="HOURS")
     l.add_argument("--due-before", metavar="DATE"); l.add_argument("--q", metavar="TEXT", help="word-start text match in title, done_means, notes or links")
     l.add_argument("--source", choices=core.SOURCES); l.add_argument("--all", action="store_true")
+    l.add_argument("--limit", type=int); l.add_argument("--offset", type=int, default=0)
+    s.add_parser("doctor", help="check configuration and connectivity")
     f = s.add_parser("flags"); f.add_argument("--stale", type=float, default=24); f.add_argument("--recent", type=float, default=24)
     s.add_parser("sean", help="waiting_on_sean queue, oldest first, with each exact ask")
     st = s.add_parser("stale", help="in_progress rows with no note in N hours, by owner"); st.add_argument("--hours", type=float, default=2)
     i = s.add_parser("import"); i.add_argument("file"); i.add_argument("--by", required=True)
+    i.add_argument("--restore", action="store_true", help="restore trusted snapshots verbatim (local only)")
     s.add_parser("export").add_argument("--path")
-    a = p.parse_args(argv); a.json = getattr(a, "json", False); B, c = backend()
+    a = p.parse_args(argv); a.json = getattr(a, "json", False)
+    if a.cmd == "doctor": return doctor()
+    c = None
     try:
+        if a.cmd == "import" and a.restore and os.environ.get("BACKLOGR_URL"):
+            raise core.TaskError("--restore is only available in local mode (unset BACKLOGR_URL)")
+        B, c = backend()
         if a.cmd == "new":
             r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note, ask=a.ask,
                          **({"evidence": a.evidence} if a.evidence else {}), **({"test_results": a.test} if a.test else {}),
@@ -112,14 +172,18 @@ def main(argv=None):
             r = B.update(c, a.id, a.by, status="done", note=a.note, evidence=a.evidence, test_results=a.test)
             if a.link: r = B.add_link(c, a.id, a.by, a.link, a.kind)
         elif a.cmd == "get": r = B.get(c, a.id)
-        elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all, due_before=a.due_before, q=a.q, source=a.source)
+        elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all, due_before=a.due_before, q=a.q, source=a.source, limit=a.limit, offset=a.offset)
         elif a.cmd == "flags": r = B.flags(c, a.stale, a.recent)
         elif a.cmd == "stale": r = B.stale(c, a.hours)
         elif a.cmd == "sean": r = B.sean_queue(c)
-        elif a.cmd == "import": r = B.bulk_import(c, json.load(open(a.file)), a.by)
+        elif a.cmd == "import":
+            with open(a.file) as f: items = json.load(f)
+            r = B.bulk_import(c, items, a.by, restore=True) if a.restore else B.bulk_import(c, items, a.by)
         elif a.cmd == "export": r = B.export(c, a.path)
-    except core.TaskError as e:
+    except (core.TaskError, OSError, ValueError, sqlite3.Error, HTTPException) as e:
         print(f"error: {e}", file=sys.stderr); return 2
+    finally:
+        if c is not None: c.close()
     for w in (r.get("warnings") or []) if isinstance(r, dict) else []: print(f"warning: {w}", file=sys.stderr)
     if a.json: print(json.dumps(r, indent=1)); return 0
     if a.cmd == "link":
@@ -131,7 +195,7 @@ def main(argv=None):
         print(f"{len(r)} task(s)")
     elif a.cmd == "sean":
         for t in r: print(f"{t['id']}  {t['age_hours']}h  {t['owner_bot']}: {t['ask'] or '(no ask recorded) ' + t['title']}")
-        print(f"{len(r)} waiting on Sean")
+        print(f"{len(r)} waiting on {core.owner()}")
     elif a.cmd == "stale":
         for o, ts in r["by_owner"].items():
             print(f"{o} ({len(ts)})")

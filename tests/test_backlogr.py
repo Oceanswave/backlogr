@@ -247,7 +247,7 @@ def test_sean_queue(c, tmp_path, monkeypatch, capsys):
     assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--status", "waiting_on_sean", "--ask", "Approve?"]) == 0
     capsys.readouterr()
     assert cli.main(["sean"]) == 0
-    out = capsys.readouterr().out; assert "Approve?" in out and "1 waiting on Sean" in out
+    out = capsys.readouterr().out; assert "Approve?" in out and "1 waiting on owner" in out
 
 def test_migrates_v1_db(tmp_path):
     p = str(tmp_path / "v1.db"); old = sqlite3.connect(p)
@@ -367,6 +367,7 @@ def test_idempotent_create(c, tmp_path, monkeypatch, capsys):
     assert "warnings" not in mk(c, title="Something unrelated entirely")
 
 def test_act(c, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("BACKLOGR_OWNER", "Sean")
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.setenv("BACKLOGR_HUMANS", "Sean")
     t = mk(c, title="sample", done_means="unit tests pass", approval_needed=True)

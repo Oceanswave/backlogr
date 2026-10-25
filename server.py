@@ -5,6 +5,8 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 import core
+from contextlib import closing
+import inspect
 
 PORT = int(os.environ.get("BACKLOGR_PORT", "8796"))
 HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_HOSTS", "127.0.0.1").split(",") if h.strip()]
@@ -23,6 +25,10 @@ mcp = FastMCP("backlogr", host=HOSTS[0],
 
 def _c(): return core.connect()
 
+def _export():
+    with closing(_c()) as c:
+        return core.export(c)
+
 @mcp.tool()
 def task_create(title: str, owner_bot: str, source: str, actor: str, done_means: str = "",
                 due: Optional[str] = None, status: str = "todo", approval_needed: bool = False,
@@ -30,10 +36,11 @@ def task_create(title: str, owner_bot: str, source: str, actor: str, done_means:
                 approved_by: Optional[str] = None, approval_source: Optional[str] = None,
                 evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None,
                 key: Optional[str] = None) -> dict:
-    """Create a task. key: a stable idempotency key (e.g. "forge:pr-12-review"); if a task already has it, that task is returned unchanged with existing=true, so retries never duplicate. The result has warnings when an open task has a very similar title: check it before carrying on. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
-    return core.create(_c(), title=title, owner_bot=owner_bot, source=source, actor=actor,
-                       done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask,
-                       approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results, key=key)
+    """Create a task. key: a stable idempotency key (e.g. "forge:pr-12-review"); if a task already has it, that task is returned unchanged with existing=true, so retries never duplicate. The result has warnings when an open task has a very similar title: check it before carrying on. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what the owner must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
+    with closing(_c()) as c:
+        return core.create(c, title=title, owner_bot=owner_bot, source=source, actor=actor,
+                           done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask,
+                           approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results, key=key)
 
 @mcp.tool()
 def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional[str] = None,
@@ -41,62 +48,68 @@ def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional
                 approval_needed: Optional[bool] = None, ask: Optional[str] = None,
                 approved_by: Optional[str] = None, approval_source: Optional[str] = None,
                 evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None) -> dict:
-    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what Sean must decide or do). Record a human approval with approved_by (the human, never a bot) and approval_source (e.g. "Sean in Chukar chat 11:17"); an approval_needed task cannot move to in_progress or done without one. Moving to done requires evidence (link, commit sha, path or command output summary), and test_results {test name: "pass"|"fail"} when done_means mentions tests. actor: your bot name."""
-    return core.update(_c(), id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask,
-                       approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results)
+    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what the owner must decide or do). Record a human approval with approved_by (the human, never a bot) and approval_source (e.g. "owner in chat"); an approval_needed task cannot move to in_progress or done without one. Moving to done requires evidence (link, commit sha, path or command output summary), and test_results {test name: "pass"|"fail"} when done_means mentions tests. actor: your bot name."""
+    with closing(_c()) as c:
+        return core.update(c, id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask,
+                           approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results)
 
 @mcp.tool()
 def task_add_link(id: str, actor: str, ref: str, kind: str = "other") -> dict:
     """Attach a link (URL or plain text) to a task. kind e.g. pr, doc, order, message, page, file, other."""
-    return core.add_link(_c(), id, actor, ref, kind)
+    with closing(_c()) as c:
+        return core.add_link(c, id, actor, ref, kind)
 
 @mcp.tool()
 def task_get(id: str) -> dict:
     """Get one task with its full updates log and links."""
-    return core.get(_c(), id)
+    with closing(_c()) as c:
+        return core.get(c, id)
 
 @mcp.tool()
 def task_list(owner: Optional[str] = None, status: Optional[str] = None, overdue: bool = False,
               stale_hours: Optional[float] = None, include_closed: bool = False, due_before: Optional[str] = None,
-              q: Optional[str] = None, source: Optional[str] = None) -> list:
+              q: Optional[str] = None, source: Optional[str] = None, limit: Optional[int] = None, offset: int = 0) -> list:
     """List tasks (open only unless status or include_closed given). Filters (AND): owner, status (one or comma list e.g. "todo,in_progress"), overdue, stale_hours (no update in N hours), due_before (ISO date), q (text in title/done_means/notes/links), source."""
-    return core.list_tasks(_c(), owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed,
-                           due_before=due_before, q=q, source=source)
+    with closing(_c()) as c:
+        return core.list_tasks(c, owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed,
+                               due_before=due_before, q=q, source=source, limit=limit, offset=offset)
 
 @mcp.tool()
 def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dict:
     """Check-in view: overdue, stale, blocked, waiting_on_sean, and tasks created in the last N hours."""
-    return core.flags(_c(), stale_hours=stale_hours, created_within_hours=created_within_hours)
+    with closing(_c()) as c:
+        return core.flags(c, stale_hours=stale_hours, created_within_hours=created_within_hours)
 
 @mcp.tool()
-def task_act(id: str, action: str, reason: Optional[str] = None, by: str = "Sean") -> dict:
-    """One-call action by a person (default Sean), e.g. from dashboard buttons. action: later (note only; reason required) | done (status done; the person's word is the evidence) | na (status declined, reason in the note) | question (status unchanged; reason is the question, marked as open_question for the owner bot until the owner updates) | undo (reverts the last act if nothing changed since). Logged in the task history as "act <action> by <by>"."""
-    return core.act(_c(), id, action, by=by, reason=reason)
+def task_act(id: str, action: str, reason: Optional[str] = None, by: Optional[str] = None) -> dict:
+    """One-call action by a person (default BACKLOGR_OWNER), e.g. from dashboard buttons. action: later (note only; reason required) | done (status done; the person's word is the evidence) | na (status declined, reason in the note) | question (status unchanged; reason is the question, marked as open_question for the owner bot until the owner updates) | undo (reverts the last act if nothing changed since). Logged in the task history as "act <action> by <by>"."""
+    with closing(_c()) as c:
+        return core.act(c, id, action, by=by, reason=reason)
 
 @mcp.tool()
 def task_link(id: str, action: str, ttl_seconds: Optional[int] = None) -> str:
     """Mint a single-use owner action link: done, na, question, or later."""
-    c = _c()
-    try:
+    with closing(_c()) as c:
         core.get(c, id)
         return core.sign_link(id, action, ttl_seconds)
-    finally:
-        c.close()
 
 @mcp.tool()
 def task_sean() -> list:
-    """Sean queue: every waiting_on_sean task, oldest first, with its exact ask and age in hours."""
-    return core.sean_queue(_c())
+    """Owner queue: every waiting_on_sean task, oldest first, with its exact ask and age in hours."""
+    with closing(_c()) as c:
+        return core.sean_queue(c)
 
 @mcp.tool()
 def task_stale(hours: float = 2) -> dict:
     """in_progress tasks with no note or change in the last N hours, grouped by owner (oldest first)."""
-    return core.stale(_c(), hours=hours)
+    with closing(_c()) as c:
+        return core.stale(c, hours=hours)
 
 @mcp.tool()
-def task_import(items: list[dict], actor: str) -> dict:
+def task_import(items: list[dict] | dict, actor: str) -> dict:
     """Bulk create tasks. Each item takes task_create fields except actor (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]."""
-    return core.bulk_import(_c(), items, actor)
+    with closing(_c()) as c:
+        return core.bulk_import(c, items, actor)
 
 
 # ---- plain JSON API used by the `backlogr` CLI (same auth) ----
@@ -110,7 +123,7 @@ API = {
     "flags": lambda c, a: core.flags(c, **a),
     "stale": lambda c, a: core.stale(c, **a),
     "sean": lambda c, a: core.sean_queue(c),
-    "act": lambda c, a: core.act(c, a["id"], a["action"], by=a.get("by") or "Sean", reason=a.get("reason")),
+    "act": lambda c, a: core.act(c, a["id"], a["action"], by=a.get("by") or core.owner(), reason=a.get("reason")),
     "import": lambda c, a: core.bulk_import(c, a["items"], a["actor"]),
     "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
 }
@@ -176,6 +189,10 @@ async def action_page(scope, receive, send):
         if c is not None: c.close()
     return await response(scope, receive, send)
 
+API_FIELDS = {op: set(inspect.signature(globals()["task_" + op]).parameters)
+              for op in API if op != "export_data"}
+API_FIELDS["export_data"] = set()
+MAX_BODY = 1024 * 1024
 
 def build_app():
     from starlette.responses import JSONResponse, PlainTextResponse
@@ -198,10 +215,20 @@ def build_app():
                 return await JSONResponse({"error": "not found"}, status_code=404)(scope, receive, send)
             body = b""
             while True:
-                m = await receive(); body += m.get("body", b"")
+                m = await receive()
+                if m["type"] == "http.disconnect": return
+                body += m.get("body", b"")
+                if len(body) > MAX_BODY:
+                    return await JSONResponse({"error": "request body too large"}, status_code=413)(scope, receive, send)
                 if not m.get("more_body"): break
             try:
-                r = API[op](core.connect(), {k: v for k, v in json.loads(body or b"{}").items() if not str(k).startswith("_")}); code = 200
+                args = json.loads(body or b"{}")
+                if not isinstance(args, dict): raise core.TaskError("request must be an object")
+                for field in args:
+                    if field not in API_FIELDS[op]: raise core.TaskError(f"unknown field: {field}")
+                with closing(core.connect()) as c:
+                    r = API[op](c, args)
+                code = 200
             except core.TaskError as e:
                 r, code = {"error": str(e)}, 400
             except (TypeError, KeyError, ValueError) as e:
@@ -226,7 +253,7 @@ def nightly_export():
         n = dt.datetime.now()
         if n.hour == 2 and last != n.date():
             last = n.date()
-            for f in (lambda: core.export(_c()), backup):
+            for f in (_export, backup):
                 try: logging.warning("nightly: %s", f())
                 except Exception as e: logging.error("nightly job failed: %s", e)
         time.sleep(300)

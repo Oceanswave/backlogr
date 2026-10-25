@@ -94,3 +94,11 @@ Links stay disabled without the secret. Set `BACKLOGR_LINK_ACTOR=Sean` and
 `BACKLOGR_HUMANS=Sean` on the live deployment; the link actor otherwise defaults
 to `owner`. Optionally set `BACKLOGR_LINK_TTL` (seconds; default seven days).
 Ensure the proxy forwards GET and POST on `/act`. Keep access private.
+
+## v1.4.0
+
+Set `BACKLOGR_OWNER` to the person's name on the server and CLI clients; it defaults to `owner`. Existing installations using Sean should set `BACKLOGR_OWNER=Sean`. This changes message text and the default actor for `act`, while keeping statuses, `sean`, `task_sean`, and source values. `BACKLOGR_HUMANS` and `BACKLOGR_APPROVERS` retain their existing meaning.
+
+API callers must send only parameters exposed by the corresponding MCP tool. Unknown fields now return 400, including fields starting with `_`. Import items may still carry IDs and timestamps. API bodies larger than 1 MiB return 413; split larger imports into smaller batches or use the local CLI.
+
+The existing additive column migration is unchanged. Databases with SQLite `user_version=0` are marked as schema version 1 on connection. Run `backlogr doctor` after upgrading to check configuration, schema, and connectivity. Use local `backlogr import export.json --by Bot --restore` (no `BACKLOGR_URL`) for trusted recovery with task fields, history, and links preserved verbatim, bypassing creation gates. Remote `--restore` is rejected. Normal CLI, API, and MCP imports enforce approval, evidence, and test gates, including for snapshots; existing IDs are skipped.

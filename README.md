@@ -34,6 +34,8 @@ Expose it only on a private network or behind an authenticating reverse proxy, f
 | `BACKLOGR_EXPORT` | nightly export, CLI `export` | `~/backlogr/exports/backlogr-export.json` |
 | `BACKLOGR_URL` | CLI remote mode (and client configs below) | unset = local DB |
 | `BACKLOGR_TOKEN_FILE` | CLI remote mode | `~/backlogr/.token` |
+| `BACKLOGR_OWNER` | name in messages and default person for `act` (server and CLI) | `owner` |
+| `BACKLOGR_HUMANS` | people whose `act done` attestation can satisfy completion gates | unset |
 | `BACKLOGR_BOTS` | bot names that can never be `approved_by` (owners and actors in the DB are always included) | none |
 | `BACKLOGR_APPROVERS` | if set, the only names accepted as `approved_by` | unset |
 
@@ -73,7 +75,7 @@ ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import.
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import.
 Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, ask (required when moving to waiting_on_sean), waiting_since, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
@@ -83,7 +85,7 @@ backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --d
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --evidence "https://example.com/pr/12" --test unit=pass --test e2e=pass   # --evidence required; --test when done_means mentions tests
-backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
+backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all] [--limit 50] [--offset 0]
 backlogr flags [--stale 24] [--recent 24]
 backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
 backlogr approve T-id --by Forge --approver Sean --source "Sean in chat 11:17"   # human approval record
@@ -115,9 +117,17 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 ## License
 [MIT](LICENSE) © 2026 Sean McLellan / BaristaLabs
 
+## Diagnostics and restore
+
+`backlogr --version` prints the installed code version. `backlogr doctor` prints configuration without the token value, including token presence and token-file permissions. Locally it checks DB writability and schema version/columns; remotely it checks `/healthz` and an authenticated `list` with `limit=1`. Exit status is 0 when all checks pass, 1 otherwise. Remote token files should have mode 600. Other CLI failures, including unreadable files, invalid import JSON, and network errors, print `error: ...` on stderr and exit 2.
+
+List pagination is optional: `--limit N --offset N` (MCP/API: `limit`, `offset`), with no limit by default. Both must be non-negative integers; pagination applies after filtering.
+
+`backlogr import export.json --by Bot` accepts either the exported `{"tasks": [...]}` object or a task list. Normal imports, including API/MCP snapshots, enforce approval, evidence, and test gates; snapshot history and derived metadata are not restored. For trusted local recovery, `backlogr import export.json --by Bot --restore` preserves IDs, timestamps, task fields, update history, and links verbatim, bypassing creation gates. Remote `--restore` is rejected; unset `BACKLOGR_URL` for local use. Existing IDs are left as they are and reported in `skipped`; the result also lists `created` IDs and per-item `errors`. SQLite backups remain the primary restore method.
+
 ## One-call human actions (`act`)
 
-`backlogr act T-id done|na|question|undo [--reason TEXT] [--by NAME]` (MCP: `task_act`, API op `act`). `--by` defaults to `Sean`.
+`backlogr act T-id done|na|question|undo [--reason TEXT] [--by NAME]` (MCP: `task_act`, API op `act`). `--by` defaults to `BACKLOGR_OWNER` (`owner` when unset). Set `BACKLOGR_OWNER=Sean` on the server and CLI clients to retain that name.
 
 | action | effect |
 |---|---|
@@ -126,7 +136,7 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 | `question` | status unchanged. `--reason` is the question; it is stored in `open_question` and listed under `flags.questions_for_owner`, and it clears on the owner bot's next update |
 | `undo` | restores status, evidence, approval, tests and question to what they were before the last act. This works only if nothing else changed the task since. |
 
-Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API drops arguments that start with `_`.
+Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API accepts only the parameters exposed by the corresponding MCP tool; unknown fields return HTTP 400 (`unknown field: x`). Request bodies over 1 MiB return HTTP 413.
 
 Dashboard mapping: `DASH T-x DONE` → `act T-x done`; `DASH T-x N/A[: r]` → `act T-x na --reason r`; `DASH T-x QUESTION: q` → `act T-x question --reason q`.
 

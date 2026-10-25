@@ -4,6 +4,12 @@ from urllib.parse import urlencode
 import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 
+__version__ = "1.4.0"
+SCHEMA_VERSION = 1
+
+def owner():
+    return os.environ.get("BACKLOGR_OWNER", "owner")
+
 DB_PATH = os.environ.get("BACKLOGR_DB", os.path.expanduser("~/backlogr/data/backlogr.db"))
 EXPORT_PATH = os.environ.get("BACKLOGR_EXPORT", os.path.expanduser("~/backlogr/exports/backlogr-export.json"))
 STATUSES = ("todo", "in_progress", "waiting_on_sean", "blocked", "done", "declined")
@@ -70,11 +76,17 @@ def connect(path=None):
     path = path or DB_PATH
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(path, timeout=15, isolation_level=None)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA busy_timeout=15000")
-    c.execute("PRAGMA foreign_keys=ON")
-    c.executescript(SCHEMA)
-    _migrate(c)
+    try:
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA busy_timeout=15000")
+        c.execute("PRAGMA foreign_keys=ON")
+        c.executescript(SCHEMA)
+        _migrate(c)
+        if c.execute("PRAGMA user_version").fetchone()[0] == 0:
+            c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    except Exception:
+        c.close()
+        raise
     return c
 
 class TaskError(ValueError):
@@ -97,7 +109,7 @@ def _new_id(c):
 
 def _need_ask(ask):
     if not (ask or "").strip():
-        raise TaskError("ask is required when status is waiting_on_sean: one line saying exactly what Sean must decide or do")
+        raise TaskError(f"ask is required when status is waiting_on_sean: one line saying exactly what {owner()} must decide or do")
 
 def _bots(c, *extra):
     """Names that can never approve: BACKLOGR_BOTS, every owner and actor seen in the DB, plus extra (actor, owner),
@@ -127,7 +139,7 @@ def _check_approver(c, approved_by, *bots):
 def _approval(c, approved_by, approval_source, *bots):
     who = _check_approver(c, approved_by, *bots)
     src = (approval_source or "").strip()
-    if not src: raise TaskError('approval_source is required with approved_by, e.g. "Sean in Chukar chat 11:17"')
+    if not src: raise TaskError(f'approval_source is required with approved_by, e.g. "{owner()} in chat"')
     return who, src
 
 def _gate(c, status, need, approved_by, *bots):
@@ -283,12 +295,17 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
 
 def add_link(c, tid, actor, ref, kind="other"):
     if not ref: raise TaskError("ref (url or text) is required")
-    _require(c, tid); ts = now()
+    ts = now()
     c.execute("BEGIN IMMEDIATE")
-    c.execute("INSERT INTO links(task_id,ts,ref,kind) VALUES(?,?,?,?)", (tid, ts, ref, kind))
-    c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)", (tid, ts, actor, f"link added ({kind}): {ref}"))
-    c.execute("UPDATE tasks SET updated_at=? WHERE id=?", (ts, tid))
-    c.execute("COMMIT")
+    try:
+        _require(c, tid)
+        c.execute("INSERT INTO links(task_id,ts,ref,kind) VALUES(?,?,?,?)", (tid, ts, ref, kind))
+        c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)", (tid, ts, actor, f"link added ({kind}): {ref}"))
+        c.execute("UPDATE tasks SET updated_at=? WHERE id=?", (ts, tid))
+        c.execute("COMMIT")
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
     return get(c, tid)
 
 def _row(r):
@@ -320,10 +337,13 @@ def _due_dt(due, end_of_day=False):
     return d
 
 def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, ref=None,
-               due_before=None, q=None, source=None):
+               due_before=None, q=None, source=None, limit=None, offset=0):
     """Filters combine with AND. status: one status, a list, or "a,b". due_before: ISO date/time; rows
     without a due are excluded. q: case-insensitive text at the start of a word (so "PR" does not match "in_progress")
-    in title, done_means, notes or link refs."""
+    in title, done_means, notes or link refs. Pagination applies after all filters; limit defaults to unlimited."""
+    for name, value in (("limit", limit), ("offset", offset)):
+        if (name == "offset" or value is not None) and (type(value) is not int or value < 0):
+            raise TaskError(f"{name} must be a non-negative integer")
     ref = ref or dt.datetime.now().astimezone()
     sql, a = "SELECT * FROM tasks WHERE 1=1", []
     if owner: sql += " AND lower(owner_bot)=lower(?)"; a.append(owner)
@@ -336,7 +356,10 @@ def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, incl
         sql += f" AND status IN ({','.join('?'*len(OPEN))})"; a += list(OPEN)
     if source:
         _check(source=source); sql += " AND source=?"; a.append(source)
-    out = [_row(r) for r in c.execute(sql + " ORDER BY COALESCE(due,'9999'), updated_at", a)]
+    sql += " ORDER BY COALESCE(due,'9999'), updated_at, id"
+    if not (q or due_before or overdue or stale_hours is not None):
+        return [_row(r) for r in c.execute(sql + " LIMIT ? OFFSET ?", (*a, -1 if limit is None else limit, offset))]
+    out = [_row(r) for r in c.execute(sql, a)]
     if q:
         rx = re.compile(r"(?<![0-9A-Za-z_])" + re.escape(q), re.I)
         def hit(t):
@@ -352,7 +375,7 @@ def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, incl
     if stale_hours is not None:
         lim = ref - dt.timedelta(hours=stale_hours)
         out = [t for t in out if t["status"] in OPEN and _parse(t["updated_at"]) < lim]
-    return out
+    return out[offset:] if limit is None else out[offset:offset + limit]
 
 def short(t):
     """One-line summary of a task row."""
@@ -400,15 +423,40 @@ def flags(c, stale_hours=24, created_within_hours=24, ref=None):
         "questions_for_owner": [t for t in allt if t.get("open_question") and t["status"] in OPEN],
     }
 
-def bulk_import(c, items, actor):
-    created, errors = [], []
-    for i, it in enumerate(items):
+def bulk_import(c, items, actor, *, restore=False):
+    if isinstance(items, dict): items = items.get("tasks")
+    if not isinstance(items, list): raise TaskError("import requires a list or an object with tasks")
+    created, skipped, errors = [], [], []
+    columns = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
+    for i, item in enumerate(items):
         try:
-            it = dict(it); links = it.pop("links", None)
-            created.append(create(c, actor=actor, links=links, **it)["id"])
+            it = dict(item)
+            if it.get("id") and c.execute("SELECT 1 FROM tasks WHERE id=?", (it["id"],)).fetchone():
+                skipped.append(it["id"]); continue
+            if not restore or "updates" not in it:
+                # Snapshot metadata is not creation input; create enforces all gates.
+                for field in ("updates", "updated_at", "waiting_since", "open_question", "last_act"):
+                    it.pop(field, None)
+                created.append(create(c, actor=actor, **it)["id"])
+                continue
+            # Trusted local restore only: preserve fields and append-only history verbatim.
+            _check(it.get("status"), it.get("source"), it.get("due"))
+            row = {k: v for k, v in it.items() if k in columns}
+            if isinstance(row.get("test_results"), dict): row["test_results"] = json.dumps(row["test_results"])
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                c.execute(f"INSERT INTO tasks({','.join(row)}) VALUES({','.join('?' * len(row))})", tuple(row.values()))
+                for u in it["updates"]:
+                    c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)", (it["id"], u["ts"], u["actor"], u["note"]))
+                for l in it.get("links", []):
+                    c.execute("INSERT INTO links(task_id,ts,ref,kind) VALUES(?,?,?,?)", (it["id"], l["ts"], l["ref"], l["kind"]))
+                c.execute("COMMIT")
+            except Exception:
+                c.execute("ROLLBACK"); raise
+            created.append(it["id"])
         except Exception as e:
-            errors.append({"index": i, "title": it.get("title"), "error": str(e)})
-    return {"created": created, "errors": errors}
+            errors.append({"index": i, "title": item.get("title") if isinstance(item, dict) else None, "error": str(e)})
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 def export(c, path=None):
     path = path or EXPORT_PATH
@@ -424,15 +472,15 @@ LINK_ACTIONS = ("done", "na", "question", "later")
 ACTS = (*LINK_ACTIONS, "undo")
 _ACT_FIELDS = ("status", "evidence", "test_results", "approved_by", "approved_at", "approval_source", "open_question")
 
-def act(c, tid, action, by="Sean", reason=None):
-    """done | na | question | later | undo, taken by a person (default Sean). Notes start with "act <action>" in the log.
+def act(c, tid, action, by=None, reason=None):
+    """done | na | question | later | undo, taken by a person (default BACKLOGR_OWNER). Notes start with "act <action>" in the log.
     done: status done. If `by` is in BACKLOGR_HUMANS (and BACKLOGR_APPROVERS, when set) their word is the evidence,
     the tests gate is skipped and their approval is recorded if needed; otherwise the normal gates apply.
     na: status declined, reason in the note. question: status unchanged, open_question set for the owner bot.
     later: status unchanged, reason recorded as a note.
     undo: restores the fields the last act changed, if nothing else touched the task since."""
     if action not in ACTS: raise TaskError(f"action must be one of {ACTS}")
-    by = (by or "").strip() or "Sean"; reason = (reason or "").strip() or None
+    by = (by or "").strip() or owner(); reason = (reason or "").strip() or None
     seq = _last_seq(c, tid)  # read first: any write after this makes update() refuse the act
     cur = get(c, tid, with_log=False)
     if action == "undo":
