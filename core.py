@@ -1,10 +1,9 @@
-"""Bot Team Task Manager core: SQLite system of record for all bot work."""
+"""Backlogr core: SQLite system of record for all bot work."""
 import json, os, sqlite3, uuid, datetime as dt
 from pathlib import Path
 
-DB_PATH = os.environ.get("TASKS_DB", "/workspace/coordinator/tasks/tasks.db")
-EXPORT_PATH = os.environ.get("TASKS_EXPORT",
-    "/cursor/stores/store-002199cb-d2af-4901-a2b2-4845c7dd7e95/tasks-export.json")
+DB_PATH = os.environ.get("BACKLOGR_DB", os.path.expanduser("~/backlogr/data/backlogr.db"))
+EXPORT_PATH = os.environ.get("BACKLOGR_EXPORT", os.path.expanduser("~/backlogr/exports/backlogr-export.json"))
 STATUSES = ("todo", "in_progress", "waiting_on_sean", "blocked", "done", "declined")
 SOURCES = ("direct_to_bot", "via_chukar", "bot_initiated")
 OPEN = ("todo", "in_progress", "waiting_on_sean", "blocked")
@@ -198,6 +197,7 @@ def bulk_import(c, items, actor):
 def export(c, path=None):
     path = path or EXPORT_PATH
     data = {"exported_at": now(), "tasks": [get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f: json.dump(data, f, indent=1)
     os.replace(tmp, path)

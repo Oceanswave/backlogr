@@ -1,0 +1,14 @@
+[Unit]
+Description=Backlogr (MCP + JSON API, system of record for bot work)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/backlogr
+EnvironmentFile=%h/backlogr/.env
+ExecStart=%h/backlogr/.venv/bin/python %h/backlogr/server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

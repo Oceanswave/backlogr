@@ -1,3 +1,4 @@
 #!/bin/sh
-# Retired local server (moved to server-host 2026-10-24). Now just checks the remote service is healthy.
-curl -fsS -m 8 https://backlogr.example.invalid/task-manager/healthz >/dev/null && echo "task server (server-host) healthy" || { echo "task server on server-host UNREACHABLE"; exit 1; }
+# Health-check a Backlogr service. Set BACKLOGR_URL (e.g. https://backlogr.example.ts.net/backlogr).
+: "${BACKLOGR_URL:?set BACKLOGR_URL}"
+curl -fsS -m 8 "$BACKLOGR_URL/healthz" >/dev/null && echo "backlogr healthy at $BACKLOGR_URL" || { echo "backlogr UNREACHABLE at $BACKLOGR_URL"; exit 1; }

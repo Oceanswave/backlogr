@@ -1,0 +1,78 @@
+# Migrating an existing "task manager" deployment to Backlogr
+
+Side-by-side install, data copy, cutover and rollback. Values in `<angle brackets>` are deployment-specific; set them as shell variables first. Nothing is secret here: tokens are read from files, never typed or echoed.
+
+```
+OLD=~/task-manager          # old install dir (unit task-manager.service, serve path /task-manager)
+NEW=~/backlogr
+OLD_PORT=<old port>         # e.g. 8795
+NEW_PORT=8796
+HOST=<your-host.your-tailnet.ts.net>
+REV=<release tag or merge sha>
+```
+
+| | Old | New |
+|---|---|---|
+| Dir / unit | `$OLD`, `task-manager.service` | `$NEW`, `backlogr.service` |
+| Port | `$OLD_PORT` | `$NEW_PORT` |
+| Path / MCP URL | `/task-manager`, `https://$HOST/task-manager/mcp` | `/backlogr`, `https://$HOST/backlogr/mcp` |
+| DB | `$OLD/data/tasks.db` | `$NEW/data/backlogr.db` |
+| MCP server name | `bot-team-tasks` | `backlogr` |
+| CLI | `task` | `backlogr` |
+
+Env renames (old names are ignored, no aliases): `TASKS_TOKEN`→`BACKLOGR_TOKEN`, `TASKS_DB`→`BACKLOGR_DB`, `TASKS_PORT`→`BACKLOGR_PORT`, `TASKS_HOSTS`→`BACKLOGR_HOSTS`, `TASKS_BACKUP_DIR`→`BACKLOGR_BACKUP_DIR`, `TASKS_BACKUP_KEEP`→`BACKLOGR_BACKUP_KEEP`, `TASKS_EXPORT`→`BACKLOGR_EXPORT`, CLI `TASK_URL`→`BACKLOGR_URL`, `TASK_TOKEN_FILE`→`BACKLOGR_TOKEN_FILE`. New: `BACKLOGR_ALLOWED_HOSTS` (the old code hard-coded its proxy host name; set it to `$HOST`).
+
+## 1. Install side by side (old service keeps running)
+```
+git clone https://github.com/Oceanswave/backlogr.git "$NEW" && cd "$NEW" && git checkout "$REV"
+python3 -m venv .venv && .venv/bin/pip install -q -e '.[test]' && .venv/bin/python -m pytest -q tests
+mkdir -p data backups exports && chmod 700 data backups exports
+install -m 600 "$OLD/.token" "$NEW/.token"      # same token: clients only change URL
+umask 077
+sed -e 's/^TASKS_/BACKLOGR_/' -e "s/^BACKLOGR_PORT=.*/BACKLOGR_PORT=$NEW_PORT/" \
+    -e 's#/data/tasks\.db#/data/backlogr.db#' -e "s#$OLD#$NEW#g" -e "s#task-manager/#backlogr/#g" \
+    "$OLD/.env" > "$NEW/.env"
+grep -q '^BACKLOGR_ALLOWED_HOSTS=' "$NEW/.env" || echo "BACKLOGR_ALLOWED_HOSTS=$HOST" >> "$NEW/.env"
+cut -d= -f1 "$NEW/.env"                          # names only; check BACKLOGR_EXPORT/BACKUP_DIR paths
+```
+
+## 2. Copy the DB (consistent online copy)
+```
+sqlite3 "$OLD/data/tasks.db" ".backup '$NEW/data/backlogr.db'"
+q='PRAGMA integrity_check; SELECT (SELECT count(*) FROM tasks),(SELECT count(*) FROM updates),(SELECT count(*) FROM links),(SELECT max(seq) FROM updates);'
+sqlite3 "$OLD/data/tasks.db" "$q"; sqlite3 "$NEW/data/backlogr.db" "$q"    # must match
+```
+
+## 3. Start Backlogr and add its route
+```
+install -D -m 644 "$NEW/deploy/backlogr.service" ~/.config/systemd/user/backlogr.service
+systemctl --user daemon-reload && systemctl --user enable --now backlogr
+curl -fsS "http://127.0.0.1:$NEW_PORT/healthz"
+tailscale serve --bg --https=443 --set-path /backlogr "http://127.0.0.1:$NEW_PORT"
+tailscale serve status                                   # both /task-manager and /backlogr
+curl -fsS "https://$HOST/backlogr/healthz"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://$HOST/backlogr/api/list" -d '{}'     # 401
+# authed check; header comes from a file, not argv:
+curl -s -H @<(printf 'Authorization: Bearer %s\n' "$(cat "$NEW/.token")") -X POST "https://$HOST/backlogr/api/list" -d '{}' | head -c 200
+```
+
+## 4. Cut over (old clients keep working)
+1. Freeze **all** writers: stop every stdio MCP client (ones that ssh in and run `$OLD/server.py --stdio` or `backlogr-server --stdio`), then `systemctl --user stop task-manager backlogr`. Check `pgrep -af "server.py|backlogr-server"` shows nothing. Do not reconnect any client until step 2 finishes, or its writes are lost by the recopy.
+2. Final copy with everything stopped: rerun step 2, compare counts, then `systemctl --user start backlogr`. Only now reconnect clients, to Backlogr (stdio: `backlogr-server --stdio`, or the HTTP URL).
+3. Repoint the **old** path at Backlogr so the old CLI wrapper and old MCP URL keep working during the transition (same API, same token):
+   `tailscale serve --bg --https=443 --set-path /task-manager "http://127.0.0.1:$NEW_PORT"`, then `curl -fsS "https://$HOST/task-manager/healthz"`.
+4. Move clients to `https://$HOST/backlogr/mcp` (README → Install the MCP), add a `backlogr` CLI wrapper with `BACKLOGR_URL`, `BACKLOGR_TOKEN_FILE` and `BACKLOGR_EXPORT` set.
+5. After every client has moved and the old path shows no traffic: `tailscale serve --https=443 --set-path /task-manager off` (never plain `--https=443 off`, which drops every route) and `systemctl --user disable task-manager`. Keep `$OLD` read-only as an archive.
+
+## Rollback
+Freeze all writers first, exactly as in step 4.1: stop every stdio MCP client and `systemctl --user stop backlogr task-manager`; `pgrep -af "server.py|backlogr-server"` must show nothing. Reconnect clients only after the old route is restored below.
+```
+# If Backlogr took writes, carry them back (schema is identical):
+sqlite3 "$NEW/data/backlogr.db" ".backup '$OLD/data/tasks.db.from-backlogr'"
+#   inspect, then with task-manager stopped: rm -f "$OLD/data/tasks.db-wal" "$OLD/data/tasks.db-shm" && mv "$OLD/data/tasks.db.from-backlogr" "$OLD/data/tasks.db"
+systemctl --user start task-manager
+tailscale serve --bg --https=443 --set-path /task-manager "http://127.0.0.1:$OLD_PORT"   # restore the old route
+curl -fsS "https://$HOST/task-manager/healthz"
+tailscale serve --https=443 --set-path /backlogr off
+```
+Then point clients back at `/task-manager/mcp`.

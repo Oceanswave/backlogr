@@ -80,7 +80,7 @@ TOK = "test-token-0123456789abcdef"
 @pytest.fixture
 def server(tmp_path):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    env = dict(os.environ, TASKS_DB=str(tmp_path / "m.db"), TASKS_PORT=str(port), TASKS_TOKEN=TOK)
+    env = dict(os.environ, BACKLOGR_DB=str(tmp_path / "m.db"), BACKLOGR_PORT=str(port), BACKLOGR_TOKEN=TOK)
     p = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try: socket.create_connection(("127.0.0.1", port), 0.2).close(); break
@@ -107,13 +107,13 @@ def test_auth(server):
     assert _req(server + "/mcp", init, f"Bearer {TOK}")[0] == 200
 
 def test_server_requires_token(tmp_path):
-    env = dict(os.environ, TASKS_DB=str(tmp_path / "x.db")); env.pop("TASKS_TOKEN", None)
+    env = dict(os.environ, BACKLOGR_DB=str(tmp_path / "x.db")); env.pop("BACKLOGR_TOKEN", None)
     r = subprocess.run([sys.executable, os.path.join(HERE, "server.py")], env=env, capture_output=True, timeout=20)
     assert r.returncode != 0
 
 def test_cli_remote(server, tmp_path, monkeypatch, capsys):
     tf = tmp_path / "tok"; tf.write_text(TOK + "\n")
-    monkeypatch.setenv("TASK_URL", server); monkeypatch.setenv("TASK_TOKEN_FILE", str(tf))
+    monkeypatch.setenv("BACKLOGR_URL", server); monkeypatch.setenv("BACKLOGR_TOKEN_FILE", str(tf))
     assert cli.main(["--json","new","Remote","--owner","Mint","--source","via_chukar","--by","Chukar"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
     assert cli.main(["update", tid, "--by","Mint","--status","blocked","--link","https://x"]) == 0
@@ -135,9 +135,9 @@ def test_mcp_http_end_to_end(server):
         async def go():
             async with streamablehttp_client(server + "/mcp", headers={"Authorization": f"Bearer {TOK}"}) as (r, w, _):
                 async with ClientSession(r, w) as s:
-                    await s.initialize()
+                    s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -146,3 +146,8 @@ def test_mcp_http_end_to_end(server):
                     bad = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="nope"))
                     assert bad.isError
         asyncio.run(go())
+
+def test_export_creates_parent_dir(c, tmp_path):
+    mk(c)
+    out = core.export(c, str(tmp_path / "new" / "dir" / "e.json"))
+    assert json.load(open(out["path"]))["tasks"]

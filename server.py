@@ -1,4 +1,4 @@
-"""MCP server (streamable HTTP on 127.0.0.1, or stdio with --stdio) for the Bot Team Task Manager."""
+"""MCP server (streamable HTTP on 127.0.0.1, or stdio with --stdio) for Backlogr."""
 import sys, os, threading, time, datetime as dt, logging, hmac, json, glob, sqlite3
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from typing import Optional
@@ -6,17 +6,19 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 import core
 
-PORT = int(os.environ.get("TASKS_PORT", "8787"))
-HOSTS = [h.strip() for h in os.environ.get("TASKS_HOSTS", "127.0.0.1").split(",") if h.strip()]
-TOKEN = os.environ.get("TASKS_TOKEN", "")
-BACKUP_DIR = os.environ.get("TASKS_BACKUP_DIR", "")
-BACKUP_KEEP = int(os.environ.get("TASKS_BACKUP_KEEP", "14"))
-_names = set(HOSTS) | {"127.0.0.1", "localhost", "server-host", "backlogr.example.invalid"}
+PORT = int(os.environ.get("BACKLOGR_PORT", "8796"))
+HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_HOSTS", "127.0.0.1").split(",") if h.strip()]
+TOKEN = os.environ.get("BACKLOGR_TOKEN", "")
+BACKUP_DIR = os.environ.get("BACKLOGR_BACKUP_DIR", "")
+BACKUP_KEEP = int(os.environ.get("BACKLOGR_BACKUP_KEEP", "14"))
+# Extra Host header names to accept (e.g. your reverse-proxy / tailnet DNS name), comma separated.
+EXTRA_HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_ALLOWED_HOSTS", "").split(",") if h.strip()]
+_names = set(HOSTS) | {"127.0.0.1", "localhost"} | set(EXTRA_HOSTS)
 _allowed = sorted(_names | {f"{h}:*" for h in _names})
-mcp = FastMCP("bot-team-tasks", host=HOSTS[0],
+mcp = FastMCP("backlogr", host=HOSTS[0],
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=_allowed, allowed_origins=[]), port=PORT, stateless_http=True,
-    instructions="Bot Team Task Manager, the system of record for all of Sean's bot work. "
-    "Rule: no task, no work. Before starting any work for Sean, call task_create (or find the existing task), "
+    instructions="Backlogr, the system of record for all of the team's bot work. "
+    "Rule: no task, no work. Before starting any work for the user, call task_create (or find the existing task), "
     "and record every status change with task_update. Always pass actor = your bot name.")
 
 def _c(): return core.connect()
@@ -59,11 +61,11 @@ def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dic
 
 @mcp.tool()
 def task_import(items: list[dict], actor: str) -> dict:
-    """Bulk create tasks. Each item takes task_create fields (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]."""
+    """Bulk create tasks. Each item takes task_create fields except actor (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]."""
     return core.bulk_import(_c(), items, actor)
 
 
-# ---- plain JSON API used by the `task` CLI (same auth) ----
+# ---- plain JSON API used by the `backlogr` CLI (same auth) ----
 API = {
     "create": lambda c, a: core.create(c, **a),
     "update": lambda c, a: core.update(c, a.pop("id"), a.pop("actor"), **a),
@@ -109,10 +111,10 @@ def build_app():
 def backup():
     if not BACKUP_DIR: return None
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    out = os.path.join(BACKUP_DIR, f"tasks-{dt.date.today().isoformat()}.db")
+    out = os.path.join(BACKUP_DIR, f"backlogr-{dt.date.today().isoformat()}.db")
     src = core.connect(); dst = sqlite3.connect(out + ".tmp")
     src.backup(dst); dst.close(); src.close(); os.replace(out + ".tmp", out)
-    for old in sorted(glob.glob(os.path.join(BACKUP_DIR, "tasks-*.db")))[:-BACKUP_KEEP]:
+    for old in sorted(glob.glob(os.path.join(BACKUP_DIR, "backlogr-*.db")))[:-BACKUP_KEEP]:
         os.remove(old)
     return out
 
@@ -136,11 +138,14 @@ def serve():
             await asyncio.gather(*(s.serve() for s in servers))
     asyncio.run(main())
 
-if __name__ == "__main__":
+def main_entry():
     core.connect().close()
     if "--stdio" in sys.argv:
         mcp.run("stdio")
     else:
-        if not TOKEN: sys.exit("TASKS_TOKEN is required for HTTP mode")
+        if not TOKEN: sys.exit("BACKLOGR_TOKEN is required for HTTP mode")
         threading.Thread(target=nightly_export, daemon=True).start()
         serve()
+
+if __name__ == "__main__":
+    main_entry()

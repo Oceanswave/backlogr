@@ -1,4 +1,4 @@
-"""task CLI. Talks to the remote service when TASK_URL is set (token from TASK_TOKEN_FILE), else the local DB. Run `task -h`."""
+"""backlogr CLI. Talks to the remote service when BACKLOGR_URL is set (token from BACKLOGR_TOKEN_FILE), else the local DB. Run `backlogr -h`."""
 import argparse, json, os, sys, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core
@@ -29,17 +29,18 @@ class Remote:
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
     def export(self, c, path=None):
         data = self._call("export_data"); path = path or core.EXPORT_PATH; tmp = path + ".tmp"
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(tmp, "w") as f: json.dump(data, f, indent=1)
         os.replace(tmp, path); return {"path": path, "count": len(data["tasks"]), "source": self.url}
 
 def backend():
-    url = os.environ.get("TASK_URL")
+    url = os.environ.get("BACKLOGR_URL")
     if not url: return core, core.connect()
-    tf = os.environ.get("TASK_TOKEN_FILE", "/workspace/coordinator/tasks/.token")
+    tf = os.environ.get("BACKLOGR_TOKEN_FILE", os.path.expanduser("~/backlogr/.token"))
     return Remote(url, open(tf).read().strip()), None
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="task", description="Bot Team Task Manager CLI (no task, no work).")
+    p = argparse.ArgumentParser(prog="backlogr", description="Backlogr CLI (no task, no work).")
     p.add_argument("--json", action="store_true", help="JSON output")
     s = p.add_subparsers(dest="cmd", required=True)
     n = s.add_parser("new"); n.add_argument("title"); n.add_argument("--owner", required=True)

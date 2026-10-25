@@ -1,0 +1,29 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    # Self-hosted runners: never run code from forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up venv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q -e '.[test]'
+      - name: Compile
+        run: '"$RUNNER_TEMP/venv/bin/python" -m py_compile cli.py core.py server.py'
+      - name: Tests
+        run: '"$RUNNER_TEMP/venv/bin/python" -m pytest -q tests'
+      - name: No legacy names
+        run: |
+          if grep -rnE 'TASKS?_(DB|PORT|HOSTS|TOKEN|URL|EXPORT|BACKUP)|task-manager|Task Manager|bot-team-tasks|/workspace/|/cursor/stores' --include='*.py' --include='*.sh' --include='*.service' --include='*.toml' --include='*.md' --include='*.example' --exclude=MIGRATION.md --exclude-dir=.github . ; then echo "legacy name found"; exit 1; fi

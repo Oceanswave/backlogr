@@ -1,62 +1,94 @@
-# Bot Team Task Manager
+# Backlogr
 
-System of record for **all** of Sean's bot work (research, purchases, edits, outreach, code). Not git-based: status describes the work.
+A small, self-hosted system of record for a team of AI agents' work (research, purchases, edits, outreach, code). Agents talk to it over MCP or a CLI. Tasks are the objects; the MCP tool verbs are `task_*`. Rule: **no task, no work.**
 
-## Rule for every bot (paste verbatim)
-> **No task, no work: before you start anything for Sean, create or find its task in the Bot Team Task Manager (`task_create` / `task new`), and record every status change, blocker and result on that task (`task_update` / `task update`, `task done`) as it happens, using your bot name as the actor.**
+- Python, SQLite (WAL), append-only update log enforced by triggers.
+- MCP over streamable HTTP (or stdio), plus a JSON API used by the CLI. Bearer-token auth on everything except `/healthz`.
+- Nightly JSON export and SQLite backup inside the service.
 
-## Where it lives (since 2026-10-24: server-host)
-- Host: **server-host**, `~/task-manager/` (user `<user>`), systemd **user** unit `task-manager.service` (Restart=always, enabled, linger on, so it starts at boot without a login).
-- Listens on `127.0.0.1:8795` and `100.64.0.10:8795` only (8787 on the tailnet IP is taken by x-outbox). Never 0.0.0.0, no Funnel, no public DNS.
-- **MCP URL (use this):** `https://backlogr.example.invalid/task-manager/mcp` (tailscale serve, tailnet-only, proxies to 127.0.0.1:8795).
-  Direct `http://100.64.0.10:8795/mcp` also works for tailnet nodes the ACL lets reach port 8795.
-- Health (no auth): `.../task-manager/healthz` -> `ok`.
-- Auth: every other request needs `Authorization: Bearer <token>`; otherwise 401.
-- Token: server-host `~/task-manager/.token` (mode 600; also inside `~/task-manager/.env`). Box copy: `/workspace/coordinator/tasks/.token` (mode 600). Never paste the token into chat, tickets or logs.
-- DB: server-host `~/task-manager/data/tasks.db` (SQLite WAL; updates log append-only via triggers).
-- Nightly at ~2 AM ET (inside the service): JSON export to `~/task-manager/exports/tasks-export.json` and `sqlite3` backup API copy to `~/task-manager/backups/tasks-YYYY-MM-DD.db` (14 kept).
-- Store export for Chukar: `/cursor/stores/store-002199cb-d2af-4901-a2b2-4845c7dd7e95/tasks-export.json` is written by `task export` on the box (pulls from the service); the box check-in routine runs it.
-- The old box DB `/workspace/coordinator/tasks/tasks.db` is retired and read-only (migrated 45 tasks / 122 updates / 10 links, checksums matched).
+## Rule for every agent (paste verbatim)
+> **No task, no work: before you start anything for the user, create or find its task in Backlogr (`task_create` / `backlogr new`), and record every status change, blocker and result on that task (`task_update` / `backlogr update`, `backlogr done`) as it happens, using your bot name as the actor.**
 
-## Operating (on server-host)
+## Run the server
 ```
-systemctl --user status|restart task-manager
-journalctl --user -u task-manager -f
-cd ~/task-manager && .venv/bin/python -m pytest -q tests
+git clone https://github.com/Oceanswave/backlogr.git ~/backlogr && cd ~/backlogr
+python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
+mkdir -p data backups exports && chmod 700 data backups exports
+cp deploy/env.example .env && chmod 600 .env    # fill in BACKLOGR_TOKEN etc.
+set -a && . ./.env && set +a && .venv/bin/backlogr-server
+curl -fsS http://127.0.0.1:8796/healthz         # ok
 ```
-Deploy: copy `core.py server.py cli.py tests/` to `~/task-manager/`, then `systemctl --user restart task-manager`.
-Remove only this serve route: `tailscale serve --https=443 --set-path /task-manager off` (do NOT run plain `--https=443 off`, it drops every route).
+As a systemd user service: `install -D -m 644 deploy/backlogr.service ~/.config/systemd/user/backlogr.service && systemctl --user daemon-reload && systemctl --user enable --now backlogr` (and `loginctl enable-linger $USER` to start at boot).
 
-## Connecting clients (token read from the file, never typed into chat)
-- Claude Code:
-  `claude mcp add --transport http task-manager https://backlogr.example.invalid/task-manager/mcp --header "Authorization: Bearer $(cat ~/task-manager/.token)"`
-- Codex (`~/.codex/config.toml`), with `TASKS_TOKEN` exported in the shell that launches Codex:
-  ```toml
-  [mcp_servers.task-manager]
-  url = "https://backlogr.example.invalid/task-manager/mcp"
-  bearer_token_env_var = "TASKS_TOKEN"
+Expose it only on a private network or behind an authenticating reverse proxy, for example Tailscale serve under a path: `tailscale serve --bg --https=443 --set-path /backlogr http://127.0.0.1:8796`, then `BACKLOGR_URL=https://<your-host>.<your-tailnet>.ts.net/backlogr`. Add that host name to `BACKLOGR_ALLOWED_HOSTS`. Routes: `$BACKLOGR_URL/mcp`, `$BACKLOGR_URL/healthz`, `$BACKLOGR_URL/api/<op>`.
+
+## Configuration
+| Variable | Used by | Default |
+|---|---|---|
+| `BACKLOGR_TOKEN` | server (required for HTTP) | none |
+| `BACKLOGR_DB` | server, local CLI | `~/backlogr/data/backlogr.db` |
+| `BACKLOGR_PORT` | server | `8796` |
+| `BACKLOGR_HOSTS` | server bind IPs (comma list) | `127.0.0.1` |
+| `BACKLOGR_ALLOWED_HOSTS` | extra accepted Host headers (proxy DNS names) | none |
+| `BACKLOGR_BACKUP_DIR` / `BACKLOGR_BACKUP_KEEP` | nightly backup (`backlogr-YYYY-MM-DD.db`) | off / `14` |
+| `BACKLOGR_EXPORT` | nightly export, CLI `export` | `~/backlogr/exports/backlogr-export.json` |
+| `BACKLOGR_URL` | CLI remote mode (and client configs below) | unset = local DB |
+| `BACKLOGR_TOKEN_FILE` | CLI remote mode | `~/backlogr/.token` |
+
+## Install the MCP
+Server name `backlogr`, streamable HTTP at `$BACKLOGR_URL/mcp`, header `Authorization: Bearer <token>`. Keep the token in an env var or a mode-600 file; never commit it or paste it into chat.
+
+- **Claude Code** (project `.mcp.json` or `~/.claude.json`; Claude Code expands `${VAR}`):
+  ```json
+  {"mcpServers": {"backlogr": {"type": "http", "url": "${BACKLOGR_URL}/mcp",
+    "headers": {"Authorization": "Bearer ${BACKLOGR_TOKEN}"}}}}
   ```
-  (Codex on server-host itself can use `http://127.0.0.1:8795/mcp`.)
-- hal9000 / any MCP client: streamable HTTP, URL above, header `Authorization: Bearer <token>`. Stdio-only clients: `ssh <user>@<server-host> 'cd task-manager && set -a && . ./.env && .venv/bin/python server.py --stdio'`.
-- Grok Bot agents: register as a remote MCP connector with that URL and header (the box is `tag:agent` and reaches it via the serve route).
+- **Codex** (`~/.codex/config.toml`, with `BACKLOGR_TOKEN` exported in the launching shell):
+  ```toml
+  [mcp_servers.backlogr]
+  url = "https://<your-host>/backlogr/mcp"
+  bearer_token_env_var = "BACKLOGR_TOKEN"
+  ```
+- **Cursor** (`~/.cursor/mcp.json`):
+  ```json
+  {"mcpServers": {"backlogr": {"url": "https://<your-host>/backlogr/mcp",
+    "headers": {"Authorization": "Bearer ${env:BACKLOGR_TOKEN}"}}}}
+  ```
+- **Stdio-only clients** (runs on the server host, reads `.env` there):
+  ```json
+  {"mcpServers": {"backlogr": {"command": "ssh", "args": ["<user>@<server-host>",
+    "cd backlogr && set -a && . ./.env && .venv/bin/python server.py --stdio"]}}}
+  ```
+- **Any other client:** streamable HTTP, the URL above, the bearer header.
+
+## Install the skill
+The agent skill is [`skills/backlogr/SKILL.md`](skills/backlogr/SKILL.md) (CLI, MCP tools, status flow, rules). Copy or symlink the folder into your agent's skills directory:
+```
+git clone https://github.com/Oceanswave/backlogr.git ~/src/backlogr
+ln -s ~/src/backlogr/skills/backlogr ~/.claude/skills/backlogr     # Claude Code
+ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
+```
+Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
 task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status, overdue, stale_hours, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_import.
 Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, created_at, updated_at, updates[], links[].
 
-## CLI (`/workspace/tools/bin/task` on the box)
-Talks to the service over HTTPS (`TASK_URL`, default the serve URL; `TASK_TOKEN_FILE`, default `/workspace/coordinator/tasks/.token`). Without `TASK_URL` it uses a local DB (`TASKS_DB`).
+## CLI (`backlogr`)
+Remote when `BACKLOGR_URL` is set (token from `BACKLOGR_TOKEN_FILE`), else the local DB (`BACKLOGR_DB`).
 ```
-task new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives, photo posted" --due 2026-10-30 --approval
-task update T-abc123 --by Mint --status blocked --note "needs vault card"
-task update T-abc123 --by Mint --link https://printify.com/... --kind order
-task done T-abc123 --by Mint --note "delivered"
-task list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24] [--all]
-task flags [--stale 24] [--recent 24]
-task get T-abc123      task import file.json --by Chukar      task export [--path P]
+backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives" --due 2026-10-30 --approval
+backlogr update T-abc123 --by Mint --status blocked --note "needs card"
+backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
+backlogr done T-abc123 --by Mint --note "delivered"
+backlogr list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24] [--all]
+backlogr flags [--stale 24] [--recent 24]
+backlogr get T-abc123      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```
-Add `--json` before the subcommand for JSON output. The CLI uses authed `POST /api/<op>` endpoints (create, update, add_link, get, list, flags, import, export_data).
+Add `--json` before the subcommand for JSON output.
 
 ## Tests
-`.venv/bin/python -m pytest -q tests` (unit, CLI local + remote, auth 401s, live MCP HTTP end-to-end). 14 pass.
-`ensure.sh` now only health-checks the server-host service; `run.sh` is retired.
+`.venv/bin/python -m pytest -q tests` (unit, CLI local + remote, auth 401s, live MCP HTTP end-to-end). `ensure.sh` health-checks `$BACKLOGR_URL`. Migrating from the earlier "task manager" deployment: [MIGRATION.md](MIGRATION.md).
+
+## License
+[MIT](LICENSE) © 2026 Sean McLellan / BaristaLabs
