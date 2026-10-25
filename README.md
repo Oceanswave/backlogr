@@ -87,6 +87,23 @@ backlogr get T-abc123      backlogr import file.json --by Chukar      backlogr e
 ```
 Add `--json` before the subcommand for JSON output.
 
+## Deploying to a host with deploy.sh
+`scripts/deploy.sh` updates an existing install (a git clone with a `.venv` and a systemd user unit, as in Run the server) on a host that has no GitHub access. Ship the release as a git bundle:
+```
+git bundle create /tmp/backlogr.bundle --all --tags
+scp /tmp/backlogr.bundle "$DEPLOY_HOST:/tmp/backlogr.bundle"
+# on the host, from the install dir:
+scripts/deploy.sh --bundle /tmp/backlogr.bundle --ref vX.Y.Z --dry-run   # preview: fetches refs, changes no files, DB or service
+scripts/deploy.sh --bundle /tmp/backlogr.bundle --ref vX.Y.Z
+```
+It refuses to run (exit 4) if tracked files in the install are modified. Otherwise it backs up the DB to `backups/pre-deploy-<ts>.db`, checks out the ref, runs `pip install -e .`, restarts the service and waits for `/healthz` (5 s per try, 40 tries). If pip install, the restart or healthz fails, it rolls the code back to the previous commit and exits 1; schema changes are not reverted, so the DB backup is kept. Without `--ref` it deploys the highest `v*` tag; without `--bundle` it fetches from `origin`.
+
+| Env | Default |
+|---|---|
+| `BACKLOGR_HOME` | `~/backlogr` (install dir) |
+| `BACKLOGR_SERVICE` | `backlogr` (systemd `--user` unit) |
+| `BACKLOGR_DB`, `BACKLOGR_PORT` | environment, else `$BACKLOGR_HOME/.env`, else `data/backlogr.db` and `8796` |
+
 ## Tests
 `.venv/bin/python -m pytest -q tests` (unit, CLI local + remote, auth 401s, live MCP HTTP end-to-end). `ensure.sh` health-checks `$BACKLOGR_URL`. Migrating from the earlier "task manager" deployment: [MIGRATION.md](MIGRATION.md).
 

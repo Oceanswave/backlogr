@@ -19,7 +19,9 @@ jobs:
       - name: Set up venv
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q -e '.[test]'
+          "$RUNNER_TEMP/venv/bin/pip" install -q -e '.[test]' shellcheck-py
+      - name: Shellcheck
+        run: '"$RUNNER_TEMP/venv/bin/shellcheck" scripts/*.sh ensure.sh'
       - name: Compile
         run: '"$RUNNER_TEMP/venv/bin/python" -m py_compile cli.py core.py server.py'
       - name: Tests
