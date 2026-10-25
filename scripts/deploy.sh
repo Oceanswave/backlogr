@@ -34,13 +34,13 @@ code(){ curl -s --connect-timeout 2 -m 5 -o /dev/null -w '%{http_code}' "http://
 health(){ for _ in $(seq 1 "${BACKLOGR_HEALTH_TRIES:-40}"); do [ "$(code)" = 200 ] && return 0; sleep 0.5; done; return 1; }
 rollback(){
   echo "$1; rolling back to $PREV (DB backup kept at $B; schema changes are not reverted automatically)"
-  git checkout -q --detach "$PREV"; .venv/bin/pip install -q -e . || true; systemctl --user restart "$SVC" || true
+  git checkout -q --detach "$PREV"; .venv/bin/python -m pip install -q -e . || true; systemctl --user restart "$SVC" || true
   if health; then echo "rolled back, healthy"; else echo "ROLLBACK UNHEALTHY: restore $B manually"; fi; exit 1; }
 if [ "$DRY" = 1 ]; then
-  echo "DRY: git checkout -q --detach $NEW"; echo "DRY: .venv/bin/pip install -q -e ."; echo "DRY: systemctl --user restart $SVC"
+  echo "DRY: git checkout -q --detach $NEW"; echo "DRY: .venv/bin/python -m pip install -q -e ."; echo "DRY: systemctl --user restart $SVC"
   echo "DRY: wait for healthz on :$PORT (now: $(code))"; exit 0; fi
 git checkout -q --detach "$NEW"
-.venv/bin/pip install -q -e . || rollback "pip install FAILED"
+.venv/bin/python -m pip install -q -e . || rollback "pip install FAILED"
 systemctl --user restart "$SVC" || rollback "restart FAILED"
 if health; then echo "OK: $(git describe --tags --always) healthy"; exit 0; fi
 rollback "healthz FAILED"

@@ -1,4 +1,4 @@
-"""Exercise scripts/deploy.sh against a throwaway install with fake pip/systemctl/curl."""
+"""Exercise scripts/deploy.sh against a throwaway install with fake venv python/systemctl/curl."""
 import os, shutil, sqlite3, subprocess, pytest
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(HERE, "scripts", "deploy.sh")
@@ -26,7 +26,7 @@ def setup(tmp_path):
     bundle = tmp_path / "b.bundle"; sh("git", "bundle", "create", str(bundle), "--all", "--tags", cwd=src)
     bin_ = tmp_path / "bin"; bin_.mkdir(); log = tmp_path / "calls.log"
     (home / ".venv" / "bin").mkdir(parents=True)
-    p = home / ".venv" / "bin" / "pip"; p.write_text(f"#!/bin/bash\necho pip \"$@\" >> {log}\n"); p.chmod(0o755)
+    p = home / ".venv" / "bin" / "python"; p.write_text(f"#!/bin/bash\n[ \"$1\" = -m ] && shift 2\necho pip \"$@\" >> {log}\n"); p.chmod(0o755)
     fake(bin_, "systemctl", f'echo systemctl "$@" >> {log}')
     fake(bin_, "curl", f'echo curl "$@" >> {log}; cat "{tmp_path}/health" 2>/dev/null || printf 200')
     env = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}", BACKLOGR_HOME=str(home),
@@ -61,8 +61,8 @@ def test_rollback_on_failed_health(setup):
     assert head(setup) == "v1"
 
 def test_rollback_on_failed_pip(setup):
-    p = setup["home"] / ".venv" / "bin" / "pip"
-    p.write_text(f'#!/bin/bash\necho pip "$@" >> {setup["log"]}\ngrep -q v2 app.txt && exit 1; exit 0\n')
+    p = setup["home"] / ".venv" / "bin" / "python"
+    p.write_text(f'#!/bin/bash\n[ "$1" = -m ] && shift 2\necho pip "$@" >> {setup["log"]}\ngrep -q v2 app.txt && exit 1; exit 0\n')
     r = run(setup, "--ref", "v1.1.0")
     assert r.returncode == 1 and "pip install FAILED" in r.stdout and "rolled back, healthy" in r.stdout
     assert head(setup) == "v1"
