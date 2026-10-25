@@ -50,9 +50,11 @@ def task_get(id: str) -> dict:
 
 @mcp.tool()
 def task_list(owner: Optional[str] = None, status: Optional[str] = None, overdue: bool = False,
-              stale_hours: Optional[float] = None, include_closed: bool = False) -> list:
-    """List tasks (open only unless status or include_closed given). Filters: owner, status, overdue, stale_hours (no update in N hours)."""
-    return core.list_tasks(_c(), owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed)
+              stale_hours: Optional[float] = None, include_closed: bool = False, due_before: Optional[str] = None,
+              q: Optional[str] = None, source: Optional[str] = None) -> list:
+    """List tasks (open only unless status or include_closed given). Filters (AND): owner, status (one or comma list e.g. "todo,in_progress"), overdue, stale_hours (no update in N hours), due_before (ISO date), q (text in title/done_means/notes/links), source."""
+    return core.list_tasks(_c(), owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed,
+                           due_before=due_before, q=q, source=source)
 
 @mcp.tool()
 def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dict:

@@ -45,8 +45,8 @@ backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/pr/1 --kind pr
 backlogr update T-abc123 --by Mint --approval yes --status waiting_on_sean --note "need OK to spend \$40"
 backlogr done T-abc123 --by Mint --note "delivered" --link https://example.com/photo --kind file
-backlogr list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24] [--all]
+backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
-backlogr get T-abc123     backlogr import tasks.json --by Chukar     backlogr export [--path P]
+backlogr get T-abc123 [--short]     backlogr import tasks.json --by Chukar     backlogr export [--path P]
 ```
 `new`/`update`/`done` print one line (`T-abc123 in_progress`); add `--json` for the full row. Exit code 2 means the server rejected the call (message on stderr).

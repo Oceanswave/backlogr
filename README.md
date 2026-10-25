@@ -81,9 +81,9 @@ backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --d
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --note "delivered"
-backlogr list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24] [--all]
+backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
-backlogr get T-abc123      backlogr import file.json --by Chukar      backlogr export [--path P]
+backlogr get T-abc123 [--short]      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```
 `new`, `update` and `done` print one line (`T-abc123 in_progress`); add `--json` (before or after the subcommand) for the full row. Other commands print a readable summary or JSON with `--json`.
 

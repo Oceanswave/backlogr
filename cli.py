@@ -22,8 +22,9 @@ class Remote:
     def update(self, c, tid, actor, **kw): return self._call("update", id=tid, actor=actor, **kw)
     def add_link(self, c, tid, actor, ref, kind="other"): return self._call("add_link", id=tid, actor=actor, ref=ref, kind=kind)
     def get(self, c, tid): return self._call("get", id=tid)
-    def list_tasks(self, c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False):
-        return self._call("list", owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed)
+    def list_tasks(self, c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, due_before=None, q=None, source=None):
+        return self._call("list", owner=owner, status=status, overdue=overdue, stale_hours=stale_hours, include_closed=include_closed,
+                          due_before=due_before, q=q, source=source)
     def flags(self, c, stale_hours=24, created_within_hours=24):
         return self._call("flags", stale_hours=stale_hours, created_within_hours=created_within_hours)
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
@@ -55,9 +56,11 @@ def main(argv=None):
     u.add_argument("--status", choices=core.STATUSES); u.add_argument("--due"); u.add_argument("--owner"); u.add_argument("--note")
     u.add_argument("--approval", choices=["yes", "no"]); u.add_argument("--link"); u.add_argument("--kind", default="other")
     d = s.add_parser("done"); d.add_argument("id"); d.add_argument("--by", required=True); d.add_argument("--note"); d.add_argument("--link"); d.add_argument("--kind", default="other")
-    g = s.add_parser("get"); g.add_argument("id")
-    l = s.add_parser("list"); l.add_argument("--owner"); l.add_argument("--status", choices=core.STATUSES)
-    l.add_argument("--overdue", action="store_true"); l.add_argument("--stale", type=float, metavar="HOURS"); l.add_argument("--all", action="store_true")
+    g = s.add_parser("get"); g.add_argument("id"); g.add_argument("--short", action="store_true", help="one line")
+    l = s.add_parser("list"); l.add_argument("--owner"); l.add_argument("--status", help="status or comma list, e.g. todo,in_progress")
+    l.add_argument("--overdue", action="store_true"); l.add_argument("--stale", "--stale-hours", dest="stale", type=float, metavar="HOURS")
+    l.add_argument("--due-before", metavar="DATE"); l.add_argument("--q", metavar="TEXT", help="word-start text match in title, done_means, notes or links")
+    l.add_argument("--source", choices=core.SOURCES); l.add_argument("--all", action="store_true")
     f = s.add_parser("flags"); f.add_argument("--stale", type=float, default=24); f.add_argument("--recent", type=float, default=24)
     i = s.add_parser("import"); i.add_argument("file"); i.add_argument("--by", required=True)
     s.add_parser("export").add_argument("--path")
@@ -75,15 +78,17 @@ def main(argv=None):
             if a.link: B.add_link(c, a.id, a.by, a.link, a.kind)
             r = B.update(c, a.id, a.by, status="done", note=a.note)
         elif a.cmd == "get": r = B.get(c, a.id)
-        elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all)
+        elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all, due_before=a.due_before, q=a.q, source=a.source)
         elif a.cmd == "flags": r = B.flags(c, a.stale, a.recent)
         elif a.cmd == "import": r = B.bulk_import(c, json.load(open(a.file)), a.by)
         elif a.cmd == "export": r = B.export(c, a.path)
     except core.TaskError as e:
         print(f"error: {e}", file=sys.stderr); return 2
     if a.json: print(json.dumps(r, indent=1)); return 0
-    if a.cmd in ("list",):
-        for t in r: print(f"{t['id']}  [{t['status']}]  {t['owner_bot']}: {t['title']}" + (f"  (due {t['due']})" if t['due'] else ""))
+    if a.cmd == "get" and a.short:
+        print(core.short(r))
+    elif a.cmd in ("list",):
+        for t in r: print(core.short(t))
         print(f"{len(r)} task(s)")
     elif a.cmd == "flags":
         for k in ("overdue", "stale", "blocked", "waiting_on_sean", "created_recently"):

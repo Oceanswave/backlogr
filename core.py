@@ -1,5 +1,5 @@
 """Backlogr core: SQLite system of record for all bot work."""
-import json, os, sqlite3, uuid, datetime as dt
+import json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 
 DB_PATH = os.environ.get("BACKLOGR_DB", os.path.expanduser("~/backlogr/data/backlogr.db"))
@@ -154,22 +154,51 @@ def _overdue(t, ref):
         d = d + dt.timedelta(days=1)
     return d < ref
 
-def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, ref=None):
+def _due_dt(due, end_of_day=False):
+    d = _parse(due)
+    if len(due) == 10 and end_of_day: d = d + dt.timedelta(days=1)
+    return d
+
+def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, include_closed=False, ref=None,
+               due_before=None, q=None, source=None):
+    """Filters combine with AND. status: one status, a list, or "a,b". due_before: ISO date/time; rows
+    without a due are excluded. q: case-insensitive text at the start of a word (so "PR" does not match "in_progress")
+    in title, done_means, notes or link refs."""
     ref = ref or dt.datetime.now().astimezone()
-    q, a = "SELECT * FROM tasks WHERE 1=1", []
-    if owner: q += " AND lower(owner_bot)=lower(?)"; a.append(owner)
+    sql, a = "SELECT * FROM tasks WHERE 1=1", []
+    if owner: sql += " AND lower(owner_bot)=lower(?)"; a.append(owner)
     if status:
-        sts = [status] if isinstance(status, str) else list(status)
-        for s in sts: _check(status=s)
-        q += f" AND status IN ({','.join('?'*len(sts))})"; a += sts
+        sts = [x.strip() for x in status.split(",")] if isinstance(status, str) else list(status)
+        sts = [x for x in sts if x]
+        for x in sts: _check(status=x)
+        sql += f" AND status IN ({','.join('?'*len(sts))})"; a += sts
     elif not include_closed:
-        q += f" AND status IN ({','.join('?'*len(OPEN))})"; a += list(OPEN)
-    out = [_row(r) for r in c.execute(q + " ORDER BY COALESCE(due,'9999'), updated_at", a)]
+        sql += f" AND status IN ({','.join('?'*len(OPEN))})"; a += list(OPEN)
+    if source:
+        _check(source=source); sql += " AND source=?"; a.append(source)
+    out = [_row(r) for r in c.execute(sql + " ORDER BY COALESCE(due,'9999'), updated_at", a)]
+    if q:
+        rx = re.compile(r"(?<![0-9A-Za-z_])" + re.escape(q), re.I)
+        def hit(t):
+            texts = [t["title"], t["done_means"]]
+            texts += [r[0] for r in c.execute("SELECT note FROM updates WHERE task_id=?", (t["id"],))]
+            texts += [r[0] for r in c.execute("SELECT ref FROM links WHERE task_id=?", (t["id"],))]
+            return any(rx.search(x or "") for x in texts)
+        out = [t for t in out if hit(t)]
+    if due_before:
+        _check(due=due_before); lim = _due_dt(due_before)
+        out = [t for t in out if t["due"] and _due_dt(t["due"]) < lim]
     if overdue: out = [t for t in out if _overdue(t, ref)]
     if stale_hours is not None:
         lim = ref - dt.timedelta(hours=stale_hours)
         out = [t for t in out if t["status"] in OPEN and _parse(t["updated_at"]) < lim]
     return out
+
+def short(t):
+    """One-line summary of a task row."""
+    s = f"{t['id']}  [{t['status']}]  {t['owner_bot']}: {t['title']}"
+    if t.get("due"): s += f"  (due {t['due']})"
+    return s
 
 def flags(c, stale_hours=24, created_within_hours=24, ref=None):
     ref = ref or dt.datetime.now().astimezone()

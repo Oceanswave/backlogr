@@ -162,3 +162,30 @@ def test_quiet_output(tmp_path, monkeypatch, capsys):
     assert cli.main(["update", tid, "--by","Mint","--note","more","--json"]) == 0
     assert json.loads(capsys.readouterr().out)["id"] == tid
     assert cli.main(["--json","get", tid]) == 0 and len(capsys.readouterr().out) > 200
+
+def test_list_real_filters(c, tmp_path, monkeypatch, capsys):
+    a = mk(c, title="Open PR for docs", owner_bot="Forge", due="2026-10-20")
+    core.update(c, a["id"], "Forge", status="in_progress")
+    b = mk(c, title="Write tests", owner_bot="Forge", source="bot_initiated")
+    core.update(c, b["id"], "Forge", status="in_progress", note="links the PR")
+    mk(c, title="Other PR", owner_bot="Mint", status="in_progress")
+    mk(c, title="PR waiting", owner_bot="Forge", status="todo")
+    mk(c, title="100% done_x", owner_bot="Forge", status="blocked")
+    ids = lambda **k: {t["id"] for t in core.list_tasks(c, **k)}
+    assert ids(owner="Forge", status="in_progress", q="PR") == {a["id"], b["id"]}
+    assert len(ids(owner="Forge", status="in_progress,todo", q="pr")) == 3
+    assert ids(source="bot_initiated") == {b["id"]}
+    assert ids(due_before="2026-10-21") == {a["id"]} and ids(due_before="2026-10-20") == set()
+    assert len(ids(q="100%")) == 1 and len(ids(q="done_x")) == 1 and ids(q="progress") == set()
+    with pytest.raises(core.TaskError): core.list_tasks(c, status="in_progress,bogus")
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "f.db"))
+    for t, o in (("Open PR", "Forge"), ("Docs", "Forge"), ("PR elsewhere", "Mint")):
+        cli.main(["new", t, "--owner", o, "--source", "via_chukar", "--by", "Chukar", "--status", "in_progress"])
+    capsys.readouterr()
+    assert cli.main(["list", "--owner", "Forge", "--status", "in_progress", "--q", "PR"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1] == "1 task(s)" and "Open PR" in out[0]
+    tid = out[0].split()[0]
+    assert cli.main(["get", tid, "--short"]) == 0
+    line = capsys.readouterr().out
+    assert line.count("\n") == 1 and tid in line and "Open PR" in line
