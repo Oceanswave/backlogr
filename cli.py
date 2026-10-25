@@ -28,6 +28,7 @@ class Remote:
     def flags(self, c, stale_hours=24, created_within_hours=24):
         return self._call("flags", stale_hours=stale_hours, created_within_hours=created_within_hours)
     def act(self, c, tid, action, by="Sean", reason=None): return self._call("act", id=tid, action=action, by=by, reason=reason)
+    def sign_link(self, task, action, ttl_seconds=None): return self._call("link", id=task, action=action, ttl_seconds=ttl_seconds)
     def sean_queue(self, c): return self._call("sean")
     def stale(self, c, hours=2): return self._call("stale", hours=hours)
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
@@ -63,10 +64,14 @@ def main(argv=None):
     u.add_argument("--approval", choices=["yes", "no"]); u.add_argument("--ask", help="required when moving to waiting_on_sean")
     u.add_argument("--link"); u.add_argument("--kind", default="other")
     u.add_argument("--evidence", help="required with --status done"); u.add_argument("--test", action="append", metavar="NAME=pass|fail")
-    ac = s.add_parser("act", help="one-call human action: done | na | question | undo (dashboard buttons)")
+    ac = s.add_parser("act", help="one-call human action: done | na | question | later | undo (dashboard buttons)")
     ac.add_argument("id"); ac.add_argument("action", choices=core.ACTS)
-    ac.add_argument("--reason", help="N/A reason, question text (required for question), or a done note")
+    ac.add_argument("--reason", help="N/A reason, question/note text (required for question/later), or a done note")
     ac.add_argument("--by", default="Sean", help="the person acting (default Sean)")
+    lk = s.add_parser("link", help="mint a single-use action link")
+    lk.add_argument("id"); lk.add_argument("--ttl", type=int)
+    group = lk.add_mutually_exclusive_group(required=True)
+    group.add_argument("--action", choices=core.LINK_ACTIONS); group.add_argument("--all", action="store_true")
     ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
     ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
     ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
@@ -97,6 +102,9 @@ def main(argv=None):
                 r = B.update(c, a.id, a.by, status=a.status, due=a.due, owner_bot=a.owner, note=a.note, ask=a.ask,
                                 evidence=a.evidence, test_results=a.test,
                                 approval_needed=None if a.approval is None else a.approval == "yes")
+        elif a.cmd == "link":
+            B.get(c, a.id)
+            r = {action: B.sign_link(a.id, action, a.ttl) for action in (core.LINK_ACTIONS if a.all else (a.action,))}
         elif a.cmd == "act": r = B.act(c, a.id, a.action, a.by, a.reason)
         elif a.cmd == "approve":
             r = B.update(c, a.id, a.by, approved_by=a.approver, approval_source=a.source)
@@ -114,7 +122,9 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr); return 2
     for w in (r.get("warnings") or []) if isinstance(r, dict) else []: print(f"warning: {w}", file=sys.stderr)
     if a.json: print(json.dumps(r, indent=1)); return 0
-    if a.cmd == "get" and a.short:
+    if a.cmd == "link":
+        for action, url in r.items(): print(f"{action} {url}" if a.all else url)
+    elif a.cmd == "get" and a.short:
         print(core.short(r))
     elif a.cmd in ("list",):
         for t in r: print(core.short(t))

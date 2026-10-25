@@ -129,3 +129,31 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API drops arguments that start with `_`.
 
 Dashboard mapping: `DASH T-x DONE` → `act T-x done`; `DASH T-x N/A[: r]` → `act T-x na --reason r`; `DASH T-x QUESTION: q` → `act T-x question --reason q`.
+
+## One-tap links
+
+Set `BACKLOGR_LINK_SECRET` to a separate random secret; it is never derived from
+`BACKLOGR_TOKEN`. Set `BACKLOGR_PUBLIC_URL` to the public base URL, including
+any proxy path. Without the link secret, minting and `/act` are disabled.
+`BACKLOGR_LINK_TTL` sets the default lifetime in seconds (604800, or seven days).
+`BACKLOGR_LINK_ACTOR` sets the recorded actor (default `owner`). The live
+deployment sets `BACKLOGR_LINK_ACTOR=Sean` and `BACKLOGR_HUMANS=Sean` so the
+existing human action rules apply.
+
+Mint locally with the secret and public URL set, or remotely with the usual
+CLI connection settings:
+
+```
+backlogr link T-xxxxxx --action done --ttl 3600
+backlogr link T-xxxxxx --all
+```
+
+MCP clients can use `task_link(id, action, ttl_seconds?)`. Actions are `done`,
+`na`, `question`, and `later`. Opening a link only shows a confirmation form.
+Submitting it applies the action once. Question and later require text; later
+adds a note without changing status. Actions can be undone through `backlogr act T-xxxxxx undo`.
+
+Links are bearer-like until expiry: anyone holding one can submit it. They
+are single use, but opening one does not consume it. Keep TTLs short, protect
+the secret, and serve only on a private network. Rotating the secret invalidates
+outstanding links.

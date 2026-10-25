@@ -84,3 +84,13 @@ Behaviour changes in 1.1.0 that existing callers may hit: moving to `waiting_on_
 
 ## v1.2.0
 Additive: the nullable columns `open_question` and `last_act` are added automatically at startup. New: `act` (CLI), `task_act` (MCP), API op `act`, and `flags.questions_for_owner`. New optional env var `BACKLOGR_HUMANS=Name[,Name]`: people who may use `act done` as an attestation and who never count as bots. Set it in the deploy env, for example to the dashboard owner's name. If it is unset, `act done` uses the normal gates.
+
+## v1.3.0
+
+Restarting creates the `used_links` table automatically; existing tasks and
+history stay in place. Configure `BACKLOGR_LINK_SECRET` separately from the API
+token and set `BACKLOGR_PUBLIC_URL` to the base URL including the proxy path.
+Links stay disabled without the secret. Set `BACKLOGR_LINK_ACTOR=Sean` and
+`BACKLOGR_HUMANS=Sean` on the live deployment; the link actor otherwise defaults
+to `owner`. Optionally set `BACKLOGR_LINK_TTL` (seconds; default seven days).
+Ensure the proxy forwards GET and POST on `/act`. Keep access private.

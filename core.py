@@ -1,4 +1,6 @@
 """Backlogr core: SQLite system of record for all bot work."""
+import base64, hashlib, hmac, secrets, time
+from urllib.parse import urlencode
 import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 
@@ -9,6 +11,8 @@ SOURCES = ("direct_to_bot", "via_chukar", "bot_initiated")
 OPEN = ("todo", "in_progress", "waiting_on_sean", "blocked")
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS used_links(
+ nonce TEXT PRIMARY KEY, task_id TEXT NOT NULL, action TEXT NOT NULL, used_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks(
  id TEXT PRIMARY KEY, title TEXT NOT NULL, done_means TEXT NOT NULL DEFAULT '',
  owner_bot TEXT NOT NULL, due TEXT, status TEXT NOT NULL DEFAULT 'todo',
@@ -218,7 +222,8 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
     _check(status, None, due)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
     # validate and write under one write lock so concurrent updates cannot slip past the gates
-    c.execute("BEGIN IMMEDIATE")
+    own_transaction = not c.in_transaction
+    if own_transaction: c.execute("BEGIN IMMEDIATE")
     try:
         _require(c, tid)
         cur = get(c, tid)
@@ -270,9 +275,10 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
             c.execute("UPDATE tasks SET updated_at=? WHERE id=?", (ts, tid))
         text = "; ".join(([note] if note and _extra else []) + parts + ([note] if note and not _extra else []))  # act notes lead
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)", (tid, ts, actor, text))
-        c.execute("COMMIT")
+        if own_transaction: c.execute("COMMIT")
     except Exception:
-        c.execute("ROLLBACK"); raise
+        if own_transaction: c.execute("ROLLBACK")
+        raise
     return get(c, tid)
 
 def add_link(c, tid, actor, ref, kind="other"):
@@ -414,14 +420,16 @@ def export(c, path=None):
     return {"path": path, "count": len(data["tasks"])}
 
 # ---- act: one-call human actions (dashboard buttons) ----
-ACTS = ("done", "na", "question", "undo")
+LINK_ACTIONS = ("done", "na", "question", "later")
+ACTS = (*LINK_ACTIONS, "undo")
 _ACT_FIELDS = ("status", "evidence", "test_results", "approved_by", "approved_at", "approval_source", "open_question")
 
 def act(c, tid, action, by="Sean", reason=None):
-    """done | na | question | undo, taken by a person (default Sean). Notes start with "act <action>" in the log.
+    """done | na | question | later | undo, taken by a person (default Sean). Notes start with "act <action>" in the log.
     done: status done. If `by` is in BACKLOGR_HUMANS (and BACKLOGR_APPROVERS, when set) their word is the evidence,
     the tests gate is skipped and their approval is recorded if needed; otherwise the normal gates apply.
     na: status declined, reason in the note. question: status unchanged, open_question set for the owner bot.
+    later: status unchanged, reason recorded as a note.
     undo: restores the fields the last act changed, if nothing else touched the task since."""
     if action not in ACTS: raise TaskError(f"action must be one of {ACTS}")
     by = (by or "").strip() or "Sean"; reason = (reason or "").strip() or None
@@ -456,6 +464,78 @@ def act(c, tid, action, by="Sean", reason=None):
         if cur["status"] == "declined": raise TaskError("already declined")
         return update(c, tid, by, status="declined", note=f"act na by {by}" + (f": {reason}" if reason else ""),
                       _extra={"last_act": snap()}, _expect=seq)
-    if not reason: raise TaskError("question text is required (--reason)")
+    if not reason: raise TaskError(f"{action} text is required (--reason)")
+    if action == "later":
+        return update(c, tid, by, note=f"act later by {by}: {reason}",
+                      _extra={"last_act": snap()}, _expect=seq)
     return update(c, tid, by, note=f"act question by {by} for {cur['owner_bot']}: {reason}",
                   _extra={"last_act": snap(), "open_question": reason}, _expect=seq)
+
+
+class LinkError(TaskError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def _link_secret():
+    secret = os.environ.get("BACKLOGR_LINK_SECRET", "")
+    if not secret:
+        raise LinkError(404, "Action links are disabled")
+    return secret.encode()
+
+
+def _link_sig(task, action, expiry, nonce):
+    message = f"v1|{task}|{action}|{expiry}|{nonce}".encode()
+    return base64.urlsafe_b64encode(hmac.new(_link_secret(), message, hashlib.sha256).digest()).decode().rstrip("=")
+
+
+def sign_link(task, action, ttl_seconds=None, text=None):
+    _link_secret()
+    if action not in LINK_ACTIONS:
+        raise TaskError("Invalid link action")
+    public = os.environ.get("BACKLOGR_PUBLIC_URL", "").rstrip("/")
+    if not public:
+        raise TaskError("BACKLOGR_PUBLIC_URL is required for action links")
+    try:
+        ttl = int(ttl_seconds if ttl_seconds is not None else os.environ.get("BACKLOGR_LINK_TTL", "604800"))
+    except (ValueError, TypeError):
+        raise TaskError("Link TTL must be an integer")
+    expiry, nonce = str(int(time.time()) + ttl), secrets.token_urlsafe(24)
+    params = dict(t=task, a=action, e=expiry, n=nonce, s=_link_sig(task, action, expiry, nonce))
+    if text is not None: params["text"] = text
+    return public + "/act?" + urlencode(params)
+
+
+def verify_link(c, params):
+    _link_secret()
+    task, action, expiry, nonce, sig = (params.get(k, "") for k in ("t", "a", "e", "n", "s"))
+    expected = _link_sig(task, action, expiry, nonce)
+    if not hmac.compare_digest(sig.encode(), expected.encode()) or action not in LINK_ACTIONS or not nonce:
+        raise LinkError(403, "Invalid action link")
+    try:
+        expired = int(expiry) <= time.time()
+    except ValueError:
+        raise LinkError(403, "Invalid action link")
+    if expired: raise LinkError(410, "This link has expired")
+    if not c.execute("SELECT 1 FROM tasks WHERE id=?", (task,)).fetchone():
+        raise LinkError(404, "Task not found")
+    return get(c, task)
+
+
+def use_link(c, params, text=None):
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        verify_link(c, params)
+        try:
+            c.execute("INSERT INTO used_links VALUES(?,?,?,?)",
+                      (params["n"], params["t"], params["a"], now()))
+        except sqlite3.IntegrityError:
+            raise LinkError(409, "This link was already used")
+        result = act(c, params["t"], params["a"],
+                     by=os.environ.get("BACKLOGR_LINK_ACTOR", "").strip() or "owner", reason=text)
+        c.execute("COMMIT")
+        return result
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
