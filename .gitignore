@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.db-*
+*.sqlite*
+.token
+.env
+*.bak
+node_modules/
+exports/
+backups/
+data/
