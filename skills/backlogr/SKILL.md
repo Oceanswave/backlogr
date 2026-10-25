@@ -49,4 +49,4 @@ backlogr list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24]
 backlogr flags [--stale 24] [--recent 24]
 backlogr get T-abc123     backlogr import tasks.json --by Chukar     backlogr export [--path P]
 ```
-Put `--json` before the subcommand for JSON output. Exit code 2 means the server rejected the call (message on stderr).
+`new`/`update`/`done` print one line (`T-abc123 in_progress`); add `--json` for the full row. Exit code 2 means the server rejected the call (message on stderr).

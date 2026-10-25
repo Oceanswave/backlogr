@@ -151,3 +151,14 @@ def test_export_creates_parent_dir(c, tmp_path):
     mk(c)
     out = core.export(c, str(tmp_path / "new" / "dir" / "e.json"))
     assert json.load(open(out["path"]))["tasks"]
+
+def test_quiet_output(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
+    assert cli.main(["new","Quiet","--owner","Mint","--source","via_chukar","--by","Chukar","--done-means","x"*300]) == 0
+    out = capsys.readouterr().out; tid = out.split()[0]
+    assert out == f"{tid} todo\n"
+    assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--note","n"*500]) == 0
+    out = capsys.readouterr().out; assert out == f"{tid} in_progress\n" and len(out) < 200
+    assert cli.main(["update", tid, "--by","Mint","--note","more","--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["id"] == tid
+    assert cli.main(["--json","get", tid]) == 0 and len(capsys.readouterr().out) > 200

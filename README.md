@@ -85,7 +85,7 @@ backlogr list [--owner Mint] [--status waiting_on_sean] [--overdue] [--stale 24]
 backlogr flags [--stale 24] [--recent 24]
 backlogr get T-abc123      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```
-Add `--json` before the subcommand for JSON output.
+`new`, `update` and `done` print one line (`T-abc123 in_progress`); add `--json` (before or after the subcommand) for the full row. Other commands print a readable summary or JSON with `--json`.
 
 ## Deploying to a host with deploy.sh
 `scripts/deploy.sh` updates an existing install (a git clone with a `.venv` and a systemd user unit, as in Run the server) on a host that has no GitHub access. Ship the release as a git bundle:

@@ -43,6 +43,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="backlogr", description="Backlogr CLI (no task, no work).")
     p.add_argument("--json", action="store_true", help="JSON output")
     s = p.add_subparsers(dest="cmd", required=True)
+    jp = argparse.ArgumentParser(add_help=False)
+    jp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="full JSON output")
+    _add = s.add_parser
+    s.add_parser = lambda *a, **k: _add(*a, parents=[jp], **k)
     n = s.add_parser("new"); n.add_argument("title"); n.add_argument("--owner", required=True)
     n.add_argument("--source", required=True, choices=core.SOURCES); n.add_argument("--by", required=True, help="actor bot")
     n.add_argument("--done-means", default=""); n.add_argument("--due"); n.add_argument("--status", default="todo", choices=core.STATUSES)
@@ -57,7 +61,7 @@ def main(argv=None):
     f = s.add_parser("flags"); f.add_argument("--stale", type=float, default=24); f.add_argument("--recent", type=float, default=24)
     i = s.add_parser("import"); i.add_argument("file"); i.add_argument("--by", required=True)
     s.add_parser("export").add_argument("--path")
-    a = p.parse_args(argv); B, c = backend()
+    a = p.parse_args(argv); a.json = getattr(a, "json", False); B, c = backend()
     try:
         if a.cmd == "new":
             r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note)
@@ -85,6 +89,8 @@ def main(argv=None):
         for k in ("overdue", "stale", "blocked", "waiting_on_sean", "created_recently"):
             print(f"{k}: {len(r[k])}")
             for t in r[k]: print(f"  {t['id']}  {t['owner_bot']}: {t['title']}")
+    elif a.cmd in ("new", "update", "done"):
+        print(f"{r['id']} {r['status']}")  # quiet by default; --json for the full row
     else:
         print(json.dumps(r, indent=1))
     return 0
