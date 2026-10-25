@@ -76,3 +76,6 @@ curl -fsS "https://$HOST/task-manager/healthz"
 tailscale serve --https=443 --set-path /backlogr off
 ```
 Then point clients back at `/task-manager/mcp`.
+
+## Upgrading 1.0.x → 1.1.0 (schema)
+1.1.0 adds columns to `tasks` (see `core.ADDED_COLUMNS`); the server adds them on start, so a restart migrates the DB in place. **Downgrading code below 1.1.0 after that needs the pre-deploy DB backup restored** (1.0.x inserts by column position and fails on the wider table). `scripts/deploy.sh` keeps that backup in `backups/pre-deploy-<ts>.db`.

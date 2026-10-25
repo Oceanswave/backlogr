@@ -28,6 +28,21 @@ CREATE INDEX IF NOT EXISTS t_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS t_owner ON tasks(owner_bot);
 """
 
+# Columns added after 1.0.0. connect() adds any that are missing (ALTER TABLE ADD COLUMN), so
+# restarting the server migrates an old DB in place. Never remove or rename a column here.
+ADDED_COLUMNS = [
+    ("ask", "TEXT"),            # exact one-line ask for Sean while waiting_on_sean
+    ("waiting_since", "TEXT"),  # when the row last entered waiting_on_sean
+]
+
+def _migrate(c):
+    have = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
+    for name, typ in ADDED_COLUMNS:
+        if name not in have:
+            try: c.execute(f"ALTER TABLE tasks ADD COLUMN {name} {typ}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e): raise
+
 def now():
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -45,6 +60,7 @@ def connect(path=None):
     c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA busy_timeout=15000")
     c.execute("PRAGMA foreign_keys=ON")
     c.executescript(SCHEMA)
+    _migrate(c)
     return c
 
 class TaskError(ValueError):
@@ -65,18 +81,24 @@ def _new_id(c):
         if not c.execute("SELECT 1 FROM tasks WHERE id=?", (i,)).fetchone():
             return i
 
+def _need_ask(ask):
+    if not (ask or "").strip():
+        raise TaskError("ask is required when status is waiting_on_sean: one line saying exactly what Sean must decide or do")
+
 def create(c, title, owner_bot, source, actor, done_means="", due=None, status="todo",
-           approval_needed=False, note=None, links=None, created_at=None, id=None):
+           approval_needed=False, note=None, links=None, created_at=None, id=None, ask=None):
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
     _check(status, source, due)
+    if status == "waiting_on_sean": _need_ask(ask)
     ts = created_at or now()
     c.execute("BEGIN IMMEDIATE")
     try:
         tid = id or _new_id(c)
-        c.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?)",
-                  (tid, title, done_means or "", owner_bot, due, status, source,
-                   int(bool(approval_needed)), ts, ts))
+        row = dict(id=tid, title=title, done_means=done_means or "", owner_bot=owner_bot, due=due, status=status,
+                   source=source, approval_needed=int(bool(approval_needed)), created_at=ts, updated_at=ts,
+                   ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None)
+        c.execute(f"INSERT INTO tasks({','.join(row)}) VALUES({','.join('?'*len(row))})", tuple(row.values()))
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)",
                   (tid, ts, actor, note or f"created ({status})"))
         for l in links or []:
@@ -92,14 +114,18 @@ def _require(c, tid):
         raise TaskError(f"no task {tid}")
 
 def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
-           approval_needed=None, title=None, done_means=None):
+           approval_needed=None, title=None, done_means=None, ask=None):
     if not actor: raise TaskError("actor is required")
     _check(status, None, due)
     _require(c, tid)
     cur = get(c, tid)
+    ask = (ask or "").strip() or None
+    entering_wait = status == "waiting_on_sean" and cur["status"] != "waiting_on_sean"
+    if entering_wait: _need_ask(ask)
     changes, parts = {}, []
+    if entering_wait: changes["waiting_since"] = now()
     for k, v in (("status", status), ("due", due), ("owner_bot", owner_bot),
-                 ("title", title), ("done_means", done_means)):
+                 ("title", title), ("done_means", done_means), ("ask", ask)):
         if v is not None and v != cur[k]:
             changes[k] = v; parts.append(f"{k}: {cur[k]} -> {v}")
     if approval_needed is not None and bool(approval_needed) != cur["approval_needed"]:
@@ -199,6 +225,17 @@ def short(t):
     s = f"{t['id']}  [{t['status']}]  {t['owner_bot']}: {t['title']}"
     if t.get("due"): s += f"  (due {t['due']})"
     return s
+
+def sean_queue(c, ref=None):
+    """Everything waiting on Sean, oldest first, each with its exact ask and age in hours."""
+    ref = ref or dt.datetime.now().astimezone()
+    out = []
+    for r in c.execute("SELECT * FROM tasks WHERE status='waiting_on_sean'"):
+        t = _row(r); since = t.get("waiting_since") or t["updated_at"]
+        out.append(dict(id=t["id"], title=t["title"], owner_bot=t["owner_bot"], ask=t.get("ask") or None,
+                        since=since, age_hours=round((ref - _parse(since)).total_seconds() / 3600, 1), due=t["due"]))
+    out.sort(key=lambda x: -x["age_hours"])
+    return out
 
 def stale(c, hours=2, ref=None):
     """in_progress rows with no log entry (note or change) in the last N hours, grouped by owner, oldest first."""

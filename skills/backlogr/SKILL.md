@@ -1,6 +1,6 @@
 ---
 name: backlogr
-description: Use whenever you start, change, block, finish or hand off any piece of work for the user, or are asked what is open, overdue, stale, blocked or waiting on the user. Backlogr is the system of record (no task, no work); this covers the backlogr CLI, the backlogr MCP tools (task_create, task_update, task_add_link, task_get, task_list, task_flags, task_stale, task_import), the status flow and the logging rules.
+description: Use whenever you start, change, block, finish or hand off any piece of work for the user, or are asked what is open, overdue, stale, blocked or waiting on the user. Backlogr is the system of record (no task, no work); this covers the backlogr CLI, the backlogr MCP tools (task_create, task_update, task_add_link, task_get, task_list, task_flags, task_stale, task_sean, task_import), the status flow and the logging rules.
 ---
 
 # Backlogr
@@ -16,7 +16,7 @@ description: Use whenever you start, change, block, finish or hand off any piece
 id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, due (ISO 8601 date or datetime), status, source (`direct_to_bot` | `via_chukar` | `bot_initiated`), approval_needed, created_at, updated_at, updates[] (append-only log), links[] (`{ref, kind}`).
 
 ## Status flow
-`todo` → `in_progress` → `done`, with side states `blocked` (say what unblocks it), `waiting_on_sean` (a decision or approval from the user is needed; say exactly what), and `declined` (won't do; say why). Reopen by setting a new open status with a note.
+`todo` → `in_progress` → `done`, with side states `blocked` (say what unblocks it), `waiting_on_sean` (a decision or approval from the user is needed; `ask` is required: one line saying exactly what), and `declined` (won't do; say why). Reopen by setting a new open status with a note.
 
 ## Rules
 1. **Owner:** set `owner_bot` to the bot doing the work; reassign with an update and a note, never silently.
@@ -35,6 +35,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 | `task_get(id)` | full task with log and links |
 | `task_list(owner?, status?, overdue?, stale_hours?, include_closed?)` | open tasks by default |
 | `task_flags(stale_hours?, created_within_hours?)` | check-in view: overdue, stale, blocked, waiting_on_sean, created_recently |
+| `task_sean()` | everything waiting_on_sean, oldest first, with its exact ask and age |
 | `task_stale(hours?=2)` | in_progress rows with no note in N hours, grouped by owner |
 | `task_import(items, actor)` | bulk create; each item takes task_create fields **except `actor`** (pass it once at the call level), plus optional `created_at` and `links` |
 
@@ -44,10 +45,11 @@ backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --d
 backlogr update T-abc123 --by Mint --status in_progress --note "started"
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/pr/1 --kind pr
-backlogr update T-abc123 --by Mint --approval yes --status waiting_on_sean --note "need OK to spend \$40"
+backlogr update T-abc123 --by Mint --approval yes --status waiting_on_sean --ask "OK to spend \$40 on the sample tee?"
 backlogr done T-abc123 --by Mint --note "delivered" --link https://example.com/photo --kind file
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
+backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
 backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]     backlogr import tasks.json --by Chukar     backlogr export [--path P]
 ```

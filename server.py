@@ -26,17 +26,17 @@ def _c(): return core.connect()
 @mcp.tool()
 def task_create(title: str, owner_bot: str, source: str, actor: str, done_means: str = "",
                 due: Optional[str] = None, status: str = "todo", approval_needed: bool = False,
-                note: Optional[str] = None) -> dict:
-    """Create a task. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. actor: your bot name."""
+                note: Optional[str] = None, ask: Optional[str] = None) -> dict:
+    """Create a task. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. actor: your bot name."""
     return core.create(_c(), title=title, owner_bot=owner_bot, source=source, actor=actor,
-                       done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note)
+                       done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask)
 
 @mcp.tool()
 def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional[str] = None,
                 owner_bot: Optional[str] = None, note: Optional[str] = None,
-                approval_needed: Optional[bool] = None) -> dict:
-    """Update a task's status/due/owner/approval_needed and/or append a note to its log. actor: your bot name."""
-    return core.update(_c(), id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed)
+                approval_needed: Optional[bool] = None, ask: Optional[str] = None) -> dict:
+    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what Sean must decide or do). actor: your bot name."""
+    return core.update(_c(), id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask)
 
 @mcp.tool()
 def task_add_link(id: str, actor: str, ref: str, kind: str = "other") -> dict:
@@ -62,6 +62,11 @@ def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dic
     return core.flags(_c(), stale_hours=stale_hours, created_within_hours=created_within_hours)
 
 @mcp.tool()
+def task_sean() -> list:
+    """Sean queue: every waiting_on_sean task, oldest first, with its exact ask and age in hours."""
+    return core.sean_queue(_c())
+
+@mcp.tool()
 def task_stale(hours: float = 2) -> dict:
     """in_progress tasks with no note or change in the last N hours, grouped by owner (oldest first)."""
     return core.stale(_c(), hours=hours)
@@ -81,6 +86,7 @@ API = {
     "list": lambda c, a: core.list_tasks(c, **a),
     "flags": lambda c, a: core.flags(c, **a),
     "stale": lambda c, a: core.stale(c, **a),
+    "sean": lambda c, a: core.sean_queue(c),
     "import": lambda c, a: core.bulk_import(c, a["items"], a["actor"]),
     "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
 }

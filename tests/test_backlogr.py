@@ -40,7 +40,7 @@ def test_list_filters_and_flags(c):
     old = (ref - dt.timedelta(hours=48)).isoformat()
     a = mk(c, title="overdue", due="2026-10-23", created_at=old)
     b = mk(c, title="blocked", owner_bot="Mint", status="blocked")
-    w = mk(c, title="wait", status="waiting_on_sean")
+    w = mk(c, title="wait", status="waiting_on_sean", ask="OK to spend $40?")
     d = mk(c, title="closed", status="done", due="2026-10-01")
     assert {t["title"] for t in core.list_tasks(c, ref=ref)} == {"overdue","blocked","wait"}
     assert [t["title"] for t in core.list_tasks(c, owner="mint", ref=ref)] == ["blocked"]
@@ -137,7 +137,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -206,3 +206,37 @@ def test_stale_detector(c, tmp_path, monkeypatch, capsys):
     assert cli.main(["stale", "--hours", "2"]) == 0
     out = capsys.readouterr().out
     assert "Mint (1)" in out and "1 stale" in out
+
+def test_sean_queue(c, tmp_path, monkeypatch, capsys):
+    a = mk(c, title="buy tee")
+    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_sean")
+    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_sean", ask="  ")
+    with pytest.raises(core.TaskError): mk(c, title="x", status="waiting_on_sean")
+    old = (dt.datetime.now().astimezone() - dt.timedelta(hours=5)).isoformat(timespec="seconds")
+    b = mk(c, title="older", status="waiting_on_sean", ask="Pick venue A or B", created_at=old)
+    core.update(c, a["id"], "Mint", status="waiting_on_sean", ask="OK to spend $40 on the tee?")
+    core.update(c, a["id"], "Mint", note="pinged")  # staying in waiting needs no new ask
+    mk(c, title="not waiting", status="blocked")
+    q = core.sean_queue(c)
+    assert len(q) == len(core.list_tasks(c, status="waiting_on_sean")) == 2
+    assert [t["id"] for t in q] == [b["id"], a["id"]] and q[0]["ask"] == "Pick venue A or B" and q[0]["age_hours"] >= 4.9
+    # legacy row (pre-migration, no ask) still counted
+    c.execute("UPDATE tasks SET status='waiting_on_sean', ask=NULL WHERE title='not waiting'")
+    assert len(core.sean_queue(c)) == 3
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--status", "waiting_on_sean"]) == 2
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar", "--status", "waiting_on_sean", "--ask", "Approve?"]) == 0
+    capsys.readouterr()
+    assert cli.main(["sean"]) == 0
+    out = capsys.readouterr().out; assert "Approve?" in out and "1 waiting on Sean" in out
+
+def test_migrates_v1_db(tmp_path):
+    p = str(tmp_path / "v1.db"); old = sqlite3.connect(p)
+    old.executescript(core.SCHEMA)  # 1.0.0 schema: no added columns
+    old.execute("INSERT INTO tasks VALUES('T-old','t','', 'Mint', NULL,'todo','via_chukar',0,'2026-10-25T10:00:00-04:00','2026-10-25T10:00:00-04:00')")
+    old.commit(); old.close()
+    c = core.connect(p)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
+    assert {n for n, _ in core.ADDED_COLUMNS} <= cols
+    assert core.get(c, "T-old")["title"] == "t"
+    core.connect(p)  # idempotent

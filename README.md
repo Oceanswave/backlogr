@@ -71,8 +71,8 @@ ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_import.
-Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, created_at, updated_at, updates[], links[].
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import.
+Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, ask (required when moving to waiting_on_sean), waiting_since, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
 Remote when `BACKLOGR_URL` is set (token from `BACKLOGR_TOKEN_FILE`), else the local DB (`BACKLOGR_DB`).
@@ -83,6 +83,7 @@ backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --note "delivered"
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
+backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
 backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```
