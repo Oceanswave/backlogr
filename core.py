@@ -200,6 +200,21 @@ def short(t):
     if t.get("due"): s += f"  (due {t['due']})"
     return s
 
+def stale(c, hours=2, ref=None):
+    """in_progress rows with no log entry (note or change) in the last N hours, grouped by owner, oldest first."""
+    ref = ref or dt.datetime.now().astimezone()
+    lim = ref - dt.timedelta(hours=hours)
+    groups = {}
+    for r in c.execute("SELECT t.*, (SELECT ts FROM updates u WHERE u.task_id=t.id ORDER BY seq DESC LIMIT 1) AS last_note_at"
+                       " FROM tasks t WHERE status='in_progress'"):
+        t = _row(r); last = _parse(t["last_note_at"] or t["updated_at"])
+        if last < lim:
+            t["hours_since_note"] = round((ref - last).total_seconds() / 3600, 1)
+            groups.setdefault(t["owner_bot"], []).append(t)
+    for v in groups.values(): v.sort(key=lambda t: -t["hours_since_note"])
+    return {"as_of": ref.isoformat(timespec="seconds"), "hours": hours,
+            "count": sum(len(v) for v in groups.values()), "by_owner": dict(sorted(groups.items()))}
+
 def flags(c, stale_hours=24, created_within_hours=24, ref=None):
     ref = ref or dt.datetime.now().astimezone()
     lim = ref - dt.timedelta(hours=created_within_hours)

@@ -62,6 +62,11 @@ def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dic
     return core.flags(_c(), stale_hours=stale_hours, created_within_hours=created_within_hours)
 
 @mcp.tool()
+def task_stale(hours: float = 2) -> dict:
+    """in_progress tasks with no note or change in the last N hours, grouped by owner (oldest first)."""
+    return core.stale(_c(), hours=hours)
+
+@mcp.tool()
 def task_import(items: list[dict], actor: str) -> dict:
     """Bulk create tasks. Each item takes task_create fields except actor (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]."""
     return core.bulk_import(_c(), items, actor)
@@ -75,6 +80,7 @@ API = {
     "get": lambda c, a: core.get(c, a["id"]),
     "list": lambda c, a: core.list_tasks(c, **a),
     "flags": lambda c, a: core.flags(c, **a),
+    "stale": lambda c, a: core.stale(c, **a),
     "import": lambda c, a: core.bulk_import(c, a["items"], a["actor"]),
     "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
 }

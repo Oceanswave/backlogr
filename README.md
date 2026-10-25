@@ -71,7 +71,7 @@ ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status, overdue, stale_hours, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_import.
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_import.
 Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
@@ -83,6 +83,7 @@ backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --note "delivered"
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
+backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```
 `new`, `update` and `done` print one line (`T-abc123 in_progress`); add `--json` (before or after the subcommand) for the full row. Other commands print a readable summary or JSON with `--json`.

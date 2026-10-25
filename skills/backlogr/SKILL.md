@@ -1,6 +1,6 @@
 ---
 name: backlogr
-description: Use whenever you start, change, block, finish or hand off any piece of work for the user, or are asked what is open, overdue, stale, blocked or waiting on the user. Backlogr is the system of record (no task, no work); this covers the backlogr CLI, the backlogr MCP tools (task_create, task_update, task_add_link, task_get, task_list, task_flags, task_import), the status flow and the logging rules.
+description: Use whenever you start, change, block, finish or hand off any piece of work for the user, or are asked what is open, overdue, stale, blocked or waiting on the user. Backlogr is the system of record (no task, no work); this covers the backlogr CLI, the backlogr MCP tools (task_create, task_update, task_add_link, task_get, task_list, task_flags, task_stale, task_import), the status flow and the logging rules.
 ---
 
 # Backlogr
@@ -35,6 +35,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 | `task_get(id)` | full task with log and links |
 | `task_list(owner?, status?, overdue?, stale_hours?, include_closed?)` | open tasks by default |
 | `task_flags(stale_hours?, created_within_hours?)` | check-in view: overdue, stale, blocked, waiting_on_sean, created_recently |
+| `task_stale(hours?=2)` | in_progress rows with no note in N hours, grouped by owner |
 | `task_import(items, actor)` | bulk create; each item takes task_create fields **except `actor`** (pass it once at the call level), plus optional `created_at` and `links` |
 
 ## CLI
@@ -47,6 +48,7 @@ backlogr update T-abc123 --by Mint --approval yes --status waiting_on_sean --not
 backlogr done T-abc123 --by Mint --note "delivered" --link https://example.com/photo --kind file
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
+backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]     backlogr import tasks.json --by Chukar     backlogr export [--path P]
 ```
 `new`/`update`/`done` print one line (`T-abc123 in_progress`); add `--json` for the full row. Exit code 2 means the server rejected the call (message on stderr).

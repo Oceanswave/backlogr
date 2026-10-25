@@ -27,6 +27,7 @@ class Remote:
                           due_before=due_before, q=q, source=source)
     def flags(self, c, stale_hours=24, created_within_hours=24):
         return self._call("flags", stale_hours=stale_hours, created_within_hours=created_within_hours)
+    def stale(self, c, hours=2): return self._call("stale", hours=hours)
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
     def export(self, c, path=None):
         data = self._call("export_data"); path = path or core.EXPORT_PATH; tmp = path + ".tmp"
@@ -62,6 +63,7 @@ def main(argv=None):
     l.add_argument("--due-before", metavar="DATE"); l.add_argument("--q", metavar="TEXT", help="word-start text match in title, done_means, notes or links")
     l.add_argument("--source", choices=core.SOURCES); l.add_argument("--all", action="store_true")
     f = s.add_parser("flags"); f.add_argument("--stale", type=float, default=24); f.add_argument("--recent", type=float, default=24)
+    st = s.add_parser("stale", help="in_progress rows with no note in N hours, by owner"); st.add_argument("--hours", type=float, default=2)
     i = s.add_parser("import"); i.add_argument("file"); i.add_argument("--by", required=True)
     s.add_parser("export").add_argument("--path")
     a = p.parse_args(argv); a.json = getattr(a, "json", False); B, c = backend()
@@ -80,6 +82,7 @@ def main(argv=None):
         elif a.cmd == "get": r = B.get(c, a.id)
         elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all, due_before=a.due_before, q=a.q, source=a.source)
         elif a.cmd == "flags": r = B.flags(c, a.stale, a.recent)
+        elif a.cmd == "stale": r = B.stale(c, a.hours)
         elif a.cmd == "import": r = B.bulk_import(c, json.load(open(a.file)), a.by)
         elif a.cmd == "export": r = B.export(c, a.path)
     except core.TaskError as e:
@@ -90,6 +93,16 @@ def main(argv=None):
     elif a.cmd in ("list",):
         for t in r: print(core.short(t))
         print(f"{len(r)} task(s)")
+    elif a.cmd == "stale":
+        for o, ts in r["by_owner"].items():
+            print(f"{o} ({len(ts)})")
+            for t in ts: print(f"  {t['id']}  {t['hours_since_note']}h  {t['title']}")
+        print(f"{r['count']} stale (no note in {r['hours']:g}h)")
+    elif a.cmd == "stale":
+        for o, ts in r["by_owner"].items():
+            print(f"{o} ({len(ts)})")
+            for t in ts: print(f"  {t['id']}  {t['hours_since_note']}h  {t['title']}")
+        print(f"{r['count']} stale (no note in {r['hours']:g}h)")
     elif a.cmd == "flags":
         for k in ("overdue", "stale", "blocked", "waiting_on_sean", "created_recently"):
             print(f"{k}: {len(r[k])}")

@@ -137,7 +137,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -189,3 +189,20 @@ def test_list_real_filters(c, tmp_path, monkeypatch, capsys):
     assert cli.main(["get", tid, "--short"]) == 0
     line = capsys.readouterr().out
     assert line.count("\n") == 1 and tid in line and "Open PR" in line
+
+def test_stale_detector(c, tmp_path, monkeypatch, capsys):
+    now = dt.datetime.now().astimezone()
+    three = (now - dt.timedelta(hours=3)).isoformat(timespec="seconds")
+    a = mk(c, title="old work", owner_bot="Forge", status="in_progress", created_at=three)
+    mk(c, title="old todo", owner_bot="Forge", status="todo", created_at=three)
+    mk(c, title="fresh", owner_bot="Mint", status="in_progress")
+    r = core.stale(c, hours=2)
+    assert r["count"] == 1 and [t["id"] for t in r["by_owner"]["Forge"]] == [a["id"]]
+    assert r["by_owner"]["Forge"][0]["hours_since_note"] >= 2.9
+    core.update(c, a["id"], "Forge", note="still going")
+    assert core.stale(c, hours=2)["count"] == 0
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "s.db"))
+    core.create(core.connect(), "cli old", "Mint", "via_chukar", "Chukar", status="in_progress", created_at=three)
+    assert cli.main(["stale", "--hours", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "Mint (1)" in out and "1 stale" in out
