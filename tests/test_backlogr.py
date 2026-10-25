@@ -41,7 +41,7 @@ def test_list_filters_and_flags(c):
     a = mk(c, title="overdue", due="2026-10-23", created_at=old)
     b = mk(c, title="blocked", owner_bot="Mint", status="blocked")
     w = mk(c, title="wait", status="waiting_on_sean", ask="OK to spend $40?")
-    d = mk(c, title="closed", status="done", due="2026-10-01")
+    d = mk(c, title="closed", status="done", due="2026-10-01", evidence="sha abc123")
     assert {t["title"] for t in core.list_tasks(c, ref=ref)} == {"overdue","blocked","wait"}
     assert [t["title"] for t in core.list_tasks(c, owner="mint", ref=ref)] == ["blocked"]
     assert [t["title"] for t in core.list_tasks(c, overdue=True, ref=ref)] == ["overdue"]
@@ -68,7 +68,7 @@ def test_cli(tmp_path, monkeypatch, capsys):
     tid = json.loads(capsys.readouterr().out)["id"]
     assert cli.main(["approve", tid, "--by","Mint","--approver","Sean","--source","chat"]) == 0
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--link","https://x","--kind","order"]) == 0
-    assert cli.main(["done", tid, "--by","Mint","--note","arrived"]) == 0
+    assert cli.main(["done", tid, "--by","Mint","--note","arrived","--evidence","tracking 1Z999"]) == 0
     capsys.readouterr()
     assert cli.main(["--json","get", tid]) == 0
     t = json.loads(capsys.readouterr().out); assert t["status"] == "done" and len(t["updates"]) == 5
@@ -289,3 +289,43 @@ def test_approval_record(c, tmp_path, monkeypatch, capsys):
         core.update(c, w["id"], "Forge", approved_by="Sean")
     u = mk(c, title="no approval needed")
     assert core.update(c, u["id"], "Forge", status="in_progress")["status"] == "in_progress"
+
+def test_done_needs_evidence(c, tmp_path, monkeypatch, capsys):
+    t = mk(c, done_means="report sent")
+    with pytest.raises(core.TaskError, match="evidence"):
+        core.update(c, t["id"], "Forge", status="done")
+    with pytest.raises(core.TaskError, match="evidence"):
+        mk(c, status="done")
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
+    with pytest.raises(SystemExit):  # CLI: --evidence is required
+        cli.main(["done", t["id"], "--by", "Forge"])
+    assert core.get(c, t["id"])["status"] == "todo"
+    assert cli.main(["done", t["id"], "--by", "Forge", "--evidence", "https://example.com/report"]) == 0
+    r = core.get(c, t["id"]); assert r["status"] == "done" and r["evidence"] == "https://example.com/report"
+    # done_means mentions tests: per-test pass/fail is required and recorded
+    u = mk(c, title="ship parser", done_means="unit tests pass and CI green")
+    with pytest.raises(core.TaskError, match="tests"):
+        core.update(c, u["id"], "Forge", status="done", evidence="sha 1234567")
+    with pytest.raises(core.TaskError, match="pass\\|fail"):
+        core.update(c, u["id"], "Forge", status="done", evidence="sha 1234567", test_results=["parse=ok"])
+    assert cli.main(["done", u["id"], "--by", "Forge", "--evidence", "sha 1234567",
+                     "--test", "parse=pass", "--test", "ci=fail"]) == 0
+    r = core.get(c, u["id"])
+    assert r["test_results"] == {"parse": "pass", "ci": "fail"}
+    assert "tests: 1 pass, 1 fail; FAIL ci" in r["updates"][-1]["note"]
+    v = mk(c, title="mcp dict form", done_means="test: smoke")
+    assert core.update(c, v["id"], "Forge", status="done", evidence="log", test_results={"smoke": "PASS"})["test_results"] == {"smoke": "pass"}
+
+def test_done_evidence_review_cases(c, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
+    assert cli.main(["new", "already shipped", "--owner", "Forge", "--source", "bot_initiated", "--by", "Forge",
+                     "--status", "done", "--done-means", "tests green", "--evidence", "sha abc", "--test", "unit=pass"]) == 0
+    tid = capsys.readouterr().out.split()[0]
+    assert core.get(c, tid)["test_results"] == {"unit": "pass"}
+    t = mk(c, done_means="report sent")
+    core.update(c, t["id"], "Forge", status="done", evidence="sent")
+    with pytest.raises(core.TaskError, match="tests"):  # changing a done row's criteria re-checks them
+        core.update(c, t["id"], "Forge", done_means="unit tests pass")
+    u = mk(c, done_means="unit tests pass")  # staged: evidence and results first, then done
+    core.update(c, u["id"], "Forge", evidence="sha 1", test_results={"unit": "pass"})
+    assert core.update(c, u["id"], "Forge", status="done")["status"] == "done"

@@ -36,6 +36,8 @@ ADDED_COLUMNS = [
     ("approved_by", "TEXT"),    # the human who approved (never a bot)
     ("approved_at", "TEXT"),    # when they approved
     ("approval_source", "TEXT"),  # where, e.g. "Sean in Chukar chat 11:17"
+    ("evidence", "TEXT"),       # what proves done: link, sha, path or command output summary
+    ("test_results", "TEXT"),   # JSON {test name: "pass"|"fail"} when done_means mentions tests
 ]
 
 def _migrate(c):
@@ -119,25 +121,51 @@ def _gate(c, status, need, approved_by, *bots):
             raise TaskError(f"approval_needed: record a human approval (approved_by, approval_source) before moving to {status}")
         _check_approver(c, approved_by, *bots)
 
+def _tests(test_results):
+    """Accept {name: pass|fail} or ["name=pass", ...]; return a clean dict."""
+    if not test_results: return {}
+    items = test_results.items() if isinstance(test_results, dict) else (str(x).rsplit("=", 1) if "=" in str(x) else (x, "") for x in test_results)
+    out = {}
+    for k, v in items:
+        k, v = str(k).strip(), str(v).strip().lower()
+        if not k or v not in ("pass", "fail"):
+            raise TaskError(f"test results must be name=pass|fail, got {k!r}={v!r}")
+        out[k] = v
+    return out
+
+def _done_gate(done_means, evidence, tests):
+    if not (evidence or "").strip():
+        raise TaskError("evidence is required to mark done: a link, commit sha, path or command output summary")
+    if re.search(r"\btests?\b", done_means or "", re.I) and not tests:
+        raise TaskError("done_means mentions tests: record pass/fail per test (test_results / --test name=pass|fail)")
+
+def _tests_note(tests):
+    if not tests: return []
+    p = sum(v == "pass" for v in tests.values())
+    return [f"tests: {p} pass, {len(tests) - p} fail" + "".join(f"; FAIL {k}" for k, v in tests.items() if v == "fail")]
+
 def create(c, title, owner_bot, source, actor, done_means="", due=None, status="todo",
            approval_needed=False, note=None, links=None, created_at=None, id=None, ask=None,
-           approved_by=None, approval_source=None, approved_at=None):
+           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None):
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
     _check(status, source, due)
     if status == "waiting_on_sean": _need_ask(ask)
+    tests = _tests(test_results); evidence = (evidence or "").strip() or None
     ts = created_at or now()
     c.execute("BEGIN IMMEDIATE")
     try:
         if approved_by is not None or approval_source:
             approved_by, approval_source = _approval(c, approved_by, approval_source, actor, owner_bot)
         _gate(c, status, approval_needed, approved_by, actor, owner_bot)
+        if status == "done": _done_gate(done_means, evidence, tests)
         tid = id or _new_id(c)
         row = dict(id=tid, title=title, done_means=done_means or "", owner_bot=owner_bot, due=due, status=status,
                    source=source, approval_needed=int(bool(approval_needed)), created_at=ts, updated_at=ts,
                    ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None,
                    approved_by=approved_by, approved_at=(approved_at or ts) if approved_by else None,
-                   approval_source=approval_source if approved_by else None)
+                   approval_source=approval_source if approved_by else None,
+                   evidence=evidence, test_results=json.dumps(tests) if tests else None)
         c.execute(f"INSERT INTO tasks({','.join(row)}) VALUES({','.join('?'*len(row))})", tuple(row.values()))
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)",
                   (tid, ts, actor, note or f"created ({status})"))
@@ -155,9 +183,10 @@ def _require(c, tid):
 
 def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
            approval_needed=None, title=None, done_means=None, ask=None,
-           approved_by=None, approval_source=None, approved_at=None):
+           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None):
     if not actor: raise TaskError("actor is required")
     _check(status, None, due)
+    tests = _tests(test_results); evidence = (evidence or "").strip() or None
     # validate and write under one write lock so concurrent updates cannot slip past the gates
     c.execute("BEGIN IMMEDIATE")
     try:
@@ -179,6 +208,12 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
             _gate(c, "done", True, changes.get("approved_by") or cur.get("approved_by"), *owners)
         if (status is not None and status != cur["status"]) or approval_needed is not None:
             _gate(c, status or cur["status"], need, changes.get("approved_by") or cur.get("approved_by"), *owners)
+        # check the resulting row (supplied values over stored ones) on entering done or when a done row's criteria change
+        if (status or cur["status"]) == "done" and (cur["status"] != "done" or done_means is not None):
+            _done_gate(done_means if done_means is not None else cur["done_means"],
+                       evidence or cur.get("evidence"), tests or cur.get("test_results"))
+        if evidence: changes["evidence"] = evidence; parts.append(f"evidence: {evidence}")
+        if tests: changes["test_results"] = json.dumps(tests); parts += _tests_note(tests)
         if entering_wait: changes["waiting_since"] = now()
         for k, v in (("status", status), ("due", due), ("owner_bot", owner_bot),
                      ("title", title), ("done_means", done_means), ("ask", ask)):
@@ -214,7 +249,9 @@ def add_link(c, tid, actor, ref, kind="other"):
     return get(c, tid)
 
 def _row(r):
-    d = dict(r); d["approval_needed"] = bool(d["approval_needed"]); return d
+    d = dict(r); d["approval_needed"] = bool(d["approval_needed"])
+    if "test_results" in d: d["test_results"] = json.loads(d["test_results"]) if d["test_results"] else None
+    return d
 
 def get(c, tid, with_log=True):
     r = c.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()

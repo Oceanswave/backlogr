@@ -23,7 +23,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 2. **Due:** set `due` when there is a deadline or promise; move it with a note saying why.
 3. **Notes:** every meaningful step gets a short `note` (what changed, what's next). The log is append-only; correct mistakes with a new note.
 4. **Approvals:** if the work needs the user's OK (spend, send, publish, delete, merge to production), set `approval_needed` and status `waiting_on_sean` until you have it, then record it with `backlogr approve T-id --by <you> --approver Sean --source "Sean in Chukar chat 11:17"` (or `approved_by` + `approval_source` on `task_update`). An `approval_needed` task cannot move to `in_progress` or `done` without it, and a bot name is never accepted as the approver: bot-relayed approval never counts.
-5. **Evidence:** attach links for results (`kind`: pr, doc, order, message, page, file, other). `done` needs a note saying what was delivered and, where possible, a link.
+5. **Evidence:** attach links for results (`kind`: pr, doc, order, message, page, file, other). `done` requires `evidence` (link, commit sha, path or command output summary); when `done_means` mentions tests, also record each test as pass or fail (`--test name=pass|fail`, or `test_results` on `task_update`).
 6. Always pass `actor` = your bot name.
 
 ## MCP tools
@@ -46,7 +46,7 @@ backlogr update T-abc123 --by Mint --status in_progress --note "started"
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/pr/1 --kind pr
 backlogr update T-abc123 --by Mint --approval yes --status waiting_on_sean --ask "OK to spend \$40 on the sample tee?"
-backlogr done T-abc123 --by Mint --note "delivered" --link https://example.com/photo --kind file
+backlogr done T-abc123 --by Mint --evidence "photo of delivered parcel" --link https://example.com/photo --kind file
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
 backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first

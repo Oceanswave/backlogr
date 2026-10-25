@@ -80,4 +80,4 @@ Then point clients back at `/task-manager/mcp`.
 ## Upgrading 1.0.x → 1.1.0 (schema)
 1.1.0 adds columns to `tasks` (see `core.ADDED_COLUMNS`); the server adds them on start, so a restart migrates the DB in place. **Downgrading code below 1.1.0 after that needs the pre-deploy DB backup restored** (1.0.x inserts by column position and fails on the wider table). `scripts/deploy.sh` keeps that backup in `backups/pre-deploy-<ts>.db`.
 
-Behaviour changes in 1.1.0 that existing callers may hit: moving to `waiting_on_sean` needs `ask`; an `approval_needed` task needs a human `approved_by` before `in_progress` or `done` (rows already past that point are left alone).
+Behaviour changes in 1.1.0 that existing callers may hit: moving to `waiting_on_sean` needs `ask`; an `approval_needed` task needs a human `approved_by` before `in_progress` or `done` (rows already past that point are left alone); moving to `done` needs `evidence` (and per-test results when `done_means` mentions tests).

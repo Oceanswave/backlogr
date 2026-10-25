@@ -82,7 +82,7 @@ Remote when `BACKLOGR_URL` is set (token from `BACKLOGR_TOKEN_FILE`), else the l
 backlogr new "Order sample tee" --owner Mint --source via_chukar --by Chukar --done-means "tee arrives" --due 2026-10-30 --approval
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
-backlogr done T-abc123 --by Mint --note "delivered"
+backlogr done T-abc123 --by Mint --evidence "https://example.com/pr/12" --test unit=pass --test e2e=pass   # --evidence required; --test when done_means mentions tests
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
 backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first

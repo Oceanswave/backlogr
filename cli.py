@@ -55,15 +55,19 @@ def main(argv=None):
     n.add_argument("--done-means", default=""); n.add_argument("--due"); n.add_argument("--status", default="todo", choices=core.STATUSES)
     n.add_argument("--approval", action="store_true"); n.add_argument("--note")
     n.add_argument("--ask", help="required with --status waiting_on_sean: exactly what Sean must decide or do")
+    n.add_argument("--evidence", help="required with --status done"); n.add_argument("--test", action="append", metavar="NAME=pass|fail")
     u = s.add_parser("update"); u.add_argument("id"); u.add_argument("--by", required=True)
     u.add_argument("--status", choices=core.STATUSES); u.add_argument("--due"); u.add_argument("--owner"); u.add_argument("--note")
     u.add_argument("--approval", choices=["yes", "no"]); u.add_argument("--ask", help="required when moving to waiting_on_sean")
     u.add_argument("--link"); u.add_argument("--kind", default="other")
+    u.add_argument("--evidence", help="required with --status done"); u.add_argument("--test", action="append", metavar="NAME=pass|fail")
     ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
     ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
     ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
     ap.add_argument("--source", required=True, help='where, e.g. "Sean in Chukar chat 11:17"')
     d = s.add_parser("done"); d.add_argument("id"); d.add_argument("--by", required=True); d.add_argument("--note"); d.add_argument("--link"); d.add_argument("--kind", default="other")
+    d.add_argument("--evidence", required=True, help="link, commit sha, path or command output summary")
+    d.add_argument("--test", action="append", metavar="NAME=pass|fail", help="per-test result; required when done_means mentions tests")
     g = s.add_parser("get"); g.add_argument("id"); g.add_argument("--short", action="store_true", help="one line")
     l = s.add_parser("list"); l.add_argument("--owner"); l.add_argument("--status", help="status or comma list, e.g. todo,in_progress")
     l.add_argument("--overdue", action="store_true"); l.add_argument("--stale", "--stale-hours", dest="stale", type=float, metavar="HOURS")
@@ -77,18 +81,20 @@ def main(argv=None):
     a = p.parse_args(argv); a.json = getattr(a, "json", False); B, c = backend()
     try:
         if a.cmd == "new":
-            r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note, ask=a.ask)
+            r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note, ask=a.ask,
+                         **({"evidence": a.evidence} if a.evidence else {}), **({"test_results": a.test} if a.test else {}))
         elif a.cmd == "update":
             r = None
             if a.link: r = B.add_link(c, a.id, a.by, a.link, a.kind)
-            if any(x is not None for x in (a.status, a.due, a.owner, a.note, a.approval, a.ask)) or not a.link:
+            if any(x is not None for x in (a.status, a.due, a.owner, a.note, a.approval, a.ask, a.evidence, a.test)) or not a.link:
                 r = B.update(c, a.id, a.by, status=a.status, due=a.due, owner_bot=a.owner, note=a.note, ask=a.ask,
+                                evidence=a.evidence, test_results=a.test,
                                 approval_needed=None if a.approval is None else a.approval == "yes")
         elif a.cmd == "approve":
             r = B.update(c, a.id, a.by, approved_by=a.approver, approval_source=a.source)
         elif a.cmd == "done":
-            if a.link: B.add_link(c, a.id, a.by, a.link, a.kind)
-            r = B.update(c, a.id, a.by, status="done", note=a.note)
+            r = B.update(c, a.id, a.by, status="done", note=a.note, evidence=a.evidence, test_results=a.test)
+            if a.link: r = B.add_link(c, a.id, a.by, a.link, a.kind)
         elif a.cmd == "get": r = B.get(c, a.id)
         elif a.cmd == "list": r = B.list_tasks(c, a.owner, a.status, a.overdue, a.stale, a.all, due_before=a.due_before, q=a.q, source=a.source)
         elif a.cmd == "flags": r = B.flags(c, a.stale, a.recent)
