@@ -114,3 +114,18 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 
 ## License
 [MIT](LICENSE) © 2026 Sean McLellan / BaristaLabs
+
+## One-call human actions (`act`)
+
+`backlogr act T-id done|na|question|undo [--reason TEXT] [--by NAME]` (MCP: `task_act`, API op `act`). `--by` defaults to `Sean`.
+
+| action | effect |
+|---|---|
+| `done` | status `done`, with evidence `confirmed done by <by>[: reason]`. If `<by>` is listed in `BACKLOGR_HUMANS` (and in `BACKLOGR_APPROVERS`, when that is set), their word counts: the tests gate is skipped, and a missing approval is recorded as `<by> via act done`. Anyone else goes through the normal gates. |
+| `na` | status `declined`, with the reason in the note |
+| `question` | status unchanged. `--reason` is the question; it is stored in `open_question` and listed under `flags.questions_for_owner`, and it clears on the owner bot's next update |
+| `undo` | restores status, evidence, approval, tests and question to what they were before the last act. This works only if nothing else changed the task since. |
+
+Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API drops arguments that start with `_`.
+
+Dashboard mapping: `DASH T-x DONE` → `act T-x done`; `DASH T-x N/A[: r]` → `act T-x na --reason r`; `DASH T-x QUESTION: q` → `act T-x question --reason q`.

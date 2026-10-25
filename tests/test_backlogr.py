@@ -138,7 +138,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -347,3 +347,57 @@ def test_idempotent_create(c, tmp_path, monkeypatch, capsys):
     assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_chukar", "--by", "Chukar"]) == 0
     assert "warning: similar title" in capsys.readouterr().err
     assert "warnings" not in mk(c, title="Something unrelated entirely")
+
+def test_act(c, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean")
+    t = mk(c, title="sample", done_means="unit tests pass", approval_needed=True)
+    # done (CLI, default --by Sean): human word is the evidence and the approval; history records it
+    assert cli.main(["act", t["id"], "done", "--reason", "looked at it"]) == 0
+    assert capsys.readouterr().out == f"{t['id']} done\n"
+    r = core.get(c, t["id"])
+    assert r["status"] == "done" and r["approved_by"] == "Sean" and r["evidence"].startswith("confirmed done by Sean")
+    assert r["updates"][-1]["actor"] == "Sean" and r["updates"][-1]["note"].startswith("act done by Sean: looked at it; approved by Sean; evidence:")
+    # undo restores status and approval fields; a second undo has nothing to undo
+    assert cli.main(["act", t["id"], "undo"]) == 0
+    r = core.get(c, t["id"]); assert r["status"] == "todo" and r["approved_by"] is None and r["evidence"] is None
+    assert r["updates"][-1]["note"] == "act undo of done by Sean: status done -> todo"
+    with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")
+    # na -> declined with reason; undo
+    assert core.act(c, t["id"], "na", reason="not needed now")["status"] == "declined"
+    assert core.get(c, t["id"])["updates"][-1]["note"] == "act na by Sean: not needed now; status: todo -> declined"
+    assert core.act(c, t["id"], "undo")["status"] == "todo"
+    # question: status kept, marked for the owner, shown in flags; owner's next update clears it
+    with pytest.raises(core.TaskError, match="question"): core.act(c, t["id"], "question")
+    q = core.act(c, t["id"], "question", reason="which vendor?")
+    assert q["status"] == "todo" and q["open_question"] == "which vendor?"
+    assert [x["id"] for x in core.flags(c)["questions_for_owner"]] == [t["id"]]
+    core.update(c, t["id"], "Forge", note="answer: vendor A")
+    assert core.get(c, t["id"])["open_question"] is None
+    with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")  # window closed
+    # Sean acting does not make Sean a "bot" for approvals; a bot acting gets the normal gates
+    assert core.update(c, t["id"], "Forge", approved_by="Sean", approval_source="chat")["approved_by"] == "Sean"
+    u = mk(c, title="bot act", done_means="unit tests pass")
+    with pytest.raises(core.TaskError, match="tests"): core.act(c, u["id"], "done", by="Forge")
+    with pytest.raises(SystemExit): cli.main(["act", t["id"], "bogus"])
+
+def test_act_safety(c, monkeypatch):
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean,Bob"); monkeypatch.setenv("BACKLOGR_APPROVERS", "Sean")
+    t = mk(c, title="gated", done_means="unit tests pass", approval_needed=True)
+    # not an allowed approver -> normal gates
+    with pytest.raises(core.TaskError): core.act(c, t["id"], "done", by="Bob")
+    # not in BACKLOGR_HUMANS -> normal gates, even with an act-looking note in history
+    core.update(c, t["id"], "Coord", note="act done by Coord")
+    with pytest.raises(core.TaskError): core.act(c, t["id"], "done", by="Coord")
+    # stale snapshot: a write between read and apply is refused
+    core.act(c, t["id"], "na", reason="x")
+    seq = core._last_seq(c, t["id"]); core.update(c, t["id"], "Forge", note="concurrent")
+    with pytest.raises(core.TaskError, match="changed"):
+        core.update(c, t["id"], "Sean", status="todo", _extra={"last_act": None}, _expect=seq)
+
+def test_act_undo_after_link_refused(c, monkeypatch):
+    monkeypatch.setenv("BACKLOGR_HUMANS", "Sean")
+    t = mk(c, title="linked")
+    core.act(c, t["id"], "done")
+    core.add_link(c, t["id"], "Forge", "https://example.com/pr/1", "pr")
+    with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")

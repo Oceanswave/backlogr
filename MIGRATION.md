@@ -81,3 +81,6 @@ Then point clients back at `/task-manager/mcp`.
 1.1.0 adds columns to `tasks` (see `core.ADDED_COLUMNS`); the server adds them on start, so a restart migrates the DB in place. **Downgrading code below 1.1.0 after that needs the pre-deploy DB backup restored** (1.0.x inserts by column position and fails on the wider table). `scripts/deploy.sh` keeps that backup in `backups/pre-deploy-<ts>.db`.
 
 Behaviour changes in 1.1.0 that existing callers may hit: moving to `waiting_on_sean` needs `ask`; an `approval_needed` task needs a human `approved_by` before `in_progress` or `done` (rows already past that point are left alone); moving to `done` needs `evidence` (and per-test results when `done_means` mentions tests). `key` is new and optional; a unique index `t_key` covers it.
+
+## v1.2.0
+Additive: the nullable columns `open_question` and `last_act` are added automatically at startup. New: `act` (CLI), `task_act` (MCP), API op `act`, and `flags.questions_for_owner`. New optional env var `BACKLOGR_HUMANS=Name[,Name]`: people who may use `act done` as an attestation and who never count as bots. Set it in the deploy env, for example to the dashboard owner's name. If it is unset, `act done` uses the normal gates.

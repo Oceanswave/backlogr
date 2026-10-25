@@ -39,6 +39,8 @@ ADDED_COLUMNS = [
     ("evidence", "TEXT"),       # what proves done: link, sha, path or command output summary
     ("test_results", "TEXT"),   # JSON {test name: "pass"|"fail"} when done_means mentions tests
     ("key", "TEXT"),            # caller's stable idempotency key; unique when set
+    ("open_question", "TEXT"),  # a human's question for the owner bot (act question); cleared when the owner updates
+    ("last_act", "TEXT"),       # JSON snapshot taken by the last act(), used by act undo
 ]
 SIMILAR = 0.8  # title similarity above this triggers a duplicate warning on create
 
@@ -94,12 +96,19 @@ def _need_ask(ask):
         raise TaskError("ask is required when status is waiting_on_sean: one line saying exactly what Sean must decide or do")
 
 def _bots(c, *extra):
-    """Names that can never approve: BACKLOGR_BOTS, every owner and actor seen in the DB, plus extra (actor, owner)."""
+    """Names that can never approve: BACKLOGR_BOTS, every owner and actor seen in the DB, plus extra (actor, owner),
+    minus BACKLOGR_HUMANS (people who may act on tasks themselves without becoming 'bots')."""
     names = {x.strip().lower() for x in os.environ.get("BACKLOGR_BOTS", "").split(",")}
     names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT owner_bot FROM tasks")}
     names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT actor FROM updates")}
     names |= {(x or "").strip().lower() for x in extra}
-    return names - {""}
+    return names - {""} - _humans()
+
+def _last_seq(c, tid):
+    return c.execute("SELECT MAX(seq) FROM updates WHERE task_id=?", (tid,)).fetchone()[0]
+
+def _humans():
+    return {x.strip().lower() for x in os.environ.get("BACKLOGR_HUMANS", "").split(",") if x.strip()}
 
 def _check_approver(c, approved_by, *bots):
     who = (approved_by or "").strip()
@@ -204,7 +213,7 @@ def _require(c, tid):
 
 def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
            approval_needed=None, title=None, done_means=None, ask=None,
-           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None):
+           approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None, _attest=False, _extra=None, _expect=None):
     if not actor: raise TaskError("actor is required")
     _check(status, None, due)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
@@ -213,6 +222,8 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
     try:
         _require(c, tid)
         cur = get(c, tid)
+        if _expect is not None and _last_seq(c, tid) != _expect:
+            raise TaskError("task changed since it was read; retry")
         ask = (ask or "").strip() or None
         entering_wait = status == "waiting_on_sean" and cur["status"] != "waiting_on_sean"
         if entering_wait: _need_ask(ask)
@@ -227,15 +238,20 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
         if cur["approval_needed"] and approval_needed is not None and not approval_needed:
             # clearing the requirement needs the same human approval, whatever the status
             _gate(c, "done", True, changes.get("approved_by") or cur.get("approved_by"), *owners)
-        if (status is not None and status != cur["status"]) or approval_needed is not None:
+        if not _attest and ((status is not None and status != cur["status"]) or approval_needed is not None):
             _gate(c, status or cur["status"], need, changes.get("approved_by") or cur.get("approved_by"), *owners)
         # check the resulting row (supplied values over stored ones) on entering done or when a done row's criteria change
         if (status or cur["status"]) == "done" and (cur["status"] != "done" or done_means is not None):
-            _done_gate(done_means if done_means is not None else cur["done_means"],
+            _done_gate("" if _attest else (done_means if done_means is not None else cur["done_means"]),
                        evidence or cur.get("evidence"), tests or cur.get("test_results"))
         if evidence: changes["evidence"] = evidence; parts.append(f"evidence: {evidence}")
         if tests: changes["test_results"] = json.dumps(tests); parts += _tests_note(tests)
         if entering_wait: changes["waiting_since"] = now()
+        if _extra: changes.update(_extra)
+        # any update by the owner answers an open question and ends the undo window of a human act
+        if not _extra and (actor or "").strip().lower() == cur["owner_bot"].strip().lower():
+            if cur.get("open_question"): changes["open_question"] = None
+        if not _extra and cur.get("last_act"): changes["last_act"] = None
         for k, v in (("status", status), ("due", due), ("owner_bot", owner_bot),
                      ("title", title), ("done_means", done_means), ("ask", ask)):
             if v is not None and v != cur[k]:
@@ -252,7 +268,7 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
                       (*changes.values(), ts, tid))
         else:
             c.execute("UPDATE tasks SET updated_at=? WHERE id=?", (ts, tid))
-        text = "; ".join(parts + ([note] if note else []))
+        text = "; ".join(([note] if note and _extra else []) + parts + ([note] if note and not _extra else []))  # act notes lead
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)", (tid, ts, actor, text))
         c.execute("COMMIT")
     except Exception:
@@ -375,6 +391,7 @@ def flags(c, stale_hours=24, created_within_hours=24, ref=None):
         "blocked": list_tasks(c, status="blocked", ref=ref),
         "waiting_on_sean": list_tasks(c, status="waiting_on_sean", ref=ref),
         "created_recently": [t for t in allt if _parse(t["created_at"]) >= lim],
+        "questions_for_owner": [t for t in allt if t.get("open_question") and t["status"] in OPEN],
     }
 
 def bulk_import(c, items, actor):
@@ -395,3 +412,50 @@ def export(c, path=None):
     with open(tmp, "w") as f: json.dump(data, f, indent=1)
     os.replace(tmp, path)
     return {"path": path, "count": len(data["tasks"])}
+
+# ---- act: one-call human actions (dashboard buttons) ----
+ACTS = ("done", "na", "question", "undo")
+_ACT_FIELDS = ("status", "evidence", "test_results", "approved_by", "approved_at", "approval_source", "open_question")
+
+def act(c, tid, action, by="Sean", reason=None):
+    """done | na | question | undo, taken by a person (default Sean). Notes start with "act <action>" in the log.
+    done: status done. If `by` is in BACKLOGR_HUMANS (and BACKLOGR_APPROVERS, when set) their word is the evidence,
+    the tests gate is skipped and their approval is recorded if needed; otherwise the normal gates apply.
+    na: status declined, reason in the note. question: status unchanged, open_question set for the owner bot.
+    undo: restores the fields the last act changed, if nothing else touched the task since."""
+    if action not in ACTS: raise TaskError(f"action must be one of {ACTS}")
+    by = (by or "").strip() or "Sean"; reason = (reason or "").strip() or None
+    seq = _last_seq(c, tid)  # read first: any write after this makes update() refuse the act
+    cur = get(c, tid, with_log=False)
+    if action == "undo":
+        if not cur.get("last_act"): raise TaskError("nothing to undo: no act since the last change")
+        last = c.execute("SELECT note FROM updates WHERE seq=?", (seq,)).fetchone()
+        if not last or not last[0].startswith("act ") or last[0].startswith("act undo"):
+            raise TaskError("nothing to undo: the task changed after the last act")
+        la = json.loads(cur["last_act"]); before = la["before"]
+        extra = {k: (json.dumps(v) if k == "test_results" and isinstance(v, dict) else v) for k, v in before.items()}
+        extra["last_act"] = None
+        return update(c, tid, by, _expect=seq, note=f"act undo of {la['action']} by {by}: status {cur['status']} -> {before['status']}",
+                      _extra=extra)
+    before = {k: cur.get(k) for k in _ACT_FIELDS}
+    snap = lambda: json.dumps({"action": action, "by": by, "before": before})
+    if action == "done":
+        if cur["status"] == "done": raise TaskError("already done")
+        human = by.lower() in _humans()
+        if human:
+            try: _check_approver(c, by)
+            except TaskError: human = False
+        extra = {"last_act": snap(), "open_question": None}
+        note = f"act done by {by}" + (f": {reason}" if reason else "")
+        if human and cur["approval_needed"] and not cur.get("approved_by"):
+            extra.update(approved_by=by, approved_at=now(), approval_source=f"{by} via act done")
+            note += f"; approved by {by}"
+        return update(c, tid, by, status="done", note=note, _attest=human, _extra=extra, _expect=seq,
+                      evidence=f"confirmed done by {by}" + (f": {reason}" if reason else ""))
+    if action == "na":
+        if cur["status"] == "declined": raise TaskError("already declined")
+        return update(c, tid, by, status="declined", note=f"act na by {by}" + (f": {reason}" if reason else ""),
+                      _extra={"last_act": snap()}, _expect=seq)
+    if not reason: raise TaskError("question text is required (--reason)")
+    return update(c, tid, by, note=f"act question by {by} for {cur['owner_bot']}: {reason}",
+                  _extra={"last_act": snap(), "open_question": reason}, _expect=seq)

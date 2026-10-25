@@ -55,3 +55,6 @@ backlogr stale [--hours 2]          # in_progress with no note in N hours, by ow
 backlogr get T-abc123 [--short]     backlogr import tasks.json --by Chukar     backlogr export [--path P]
 ```
 `new`/`update`/`done` print one line (`T-abc123 in_progress`); add `--json` for the full row. Exit code 2 means the server rejected the call (message on stderr).
+
+## Human actions
+When a person says done, N/A, or asks a question about a task (for example the dashboard's `DASH T-x DONE|N/A: r|QUESTION: q`), use `backlogr act T-x done|na|question [--reason ...] [--by NAME]`, or `undo` to revert it. Check `flags` → `questions_for_owner` and answer the question with an update on your own task; that clears it.

@@ -69,6 +69,11 @@ def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dic
     return core.flags(_c(), stale_hours=stale_hours, created_within_hours=created_within_hours)
 
 @mcp.tool()
+def task_act(id: str, action: str, reason: Optional[str] = None, by: str = "Sean") -> dict:
+    """One-call action by a person (default Sean), e.g. from dashboard buttons. action: done (status done; the person's word is the evidence) | na (status declined, reason in the note) | question (status unchanged; reason is the question, marked as open_question for the owner bot until the owner updates) | undo (reverts the last act if nothing changed since). Logged in the task history as "act <action> by <by>"."""
+    return core.act(_c(), id, action, by=by, reason=reason)
+
+@mcp.tool()
 def task_sean() -> list:
     """Sean queue: every waiting_on_sean task, oldest first, with its exact ask and age in hours."""
     return core.sean_queue(_c())
@@ -94,6 +99,7 @@ API = {
     "flags": lambda c, a: core.flags(c, **a),
     "stale": lambda c, a: core.stale(c, **a),
     "sean": lambda c, a: core.sean_queue(c),
+    "act": lambda c, a: core.act(c, a["id"], a["action"], by=a.get("by") or "Sean", reason=a.get("reason")),
     "import": lambda c, a: core.bulk_import(c, a["items"], a["actor"]),
     "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
 }
@@ -120,7 +126,7 @@ def build_app():
                 m = await receive(); body += m.get("body", b"")
                 if not m.get("more_body"): break
             try:
-                r = API[op](core.connect(), json.loads(body or b"{}")); code = 200
+                r = API[op](core.connect(), {k: v for k, v in json.loads(body or b"{}").items() if not str(k).startswith("_")}); code = 200
             except core.TaskError as e:
                 r, code = {"error": str(e)}, 400
             except (TypeError, KeyError, ValueError) as e:

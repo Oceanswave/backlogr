@@ -27,6 +27,7 @@ class Remote:
                           due_before=due_before, q=q, source=source)
     def flags(self, c, stale_hours=24, created_within_hours=24):
         return self._call("flags", stale_hours=stale_hours, created_within_hours=created_within_hours)
+    def act(self, c, tid, action, by="Sean", reason=None): return self._call("act", id=tid, action=action, by=by, reason=reason)
     def sean_queue(self, c): return self._call("sean")
     def stale(self, c, hours=2): return self._call("stale", hours=hours)
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
@@ -62,6 +63,10 @@ def main(argv=None):
     u.add_argument("--approval", choices=["yes", "no"]); u.add_argument("--ask", help="required when moving to waiting_on_sean")
     u.add_argument("--link"); u.add_argument("--kind", default="other")
     u.add_argument("--evidence", help="required with --status done"); u.add_argument("--test", action="append", metavar="NAME=pass|fail")
+    ac = s.add_parser("act", help="one-call human action: done | na | question | undo (dashboard buttons)")
+    ac.add_argument("id"); ac.add_argument("action", choices=core.ACTS)
+    ac.add_argument("--reason", help="N/A reason, question text (required for question), or a done note")
+    ac.add_argument("--by", default="Sean", help="the person acting (default Sean)")
     ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
     ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
     ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
@@ -92,6 +97,7 @@ def main(argv=None):
                 r = B.update(c, a.id, a.by, status=a.status, due=a.due, owner_bot=a.owner, note=a.note, ask=a.ask,
                                 evidence=a.evidence, test_results=a.test,
                                 approval_needed=None if a.approval is None else a.approval == "yes")
+        elif a.cmd == "act": r = B.act(c, a.id, a.action, a.by, a.reason)
         elif a.cmd == "approve":
             r = B.update(c, a.id, a.by, approved_by=a.approver, approval_source=a.source)
         elif a.cmd == "done":
@@ -125,7 +131,7 @@ def main(argv=None):
         for k in ("overdue", "stale", "blocked", "waiting_on_sean", "created_recently"):
             print(f"{k}: {len(r[k])}")
             for t in r[k]: print(f"  {t['id']}  {t['owner_bot']}: {t['title']}")
-    elif a.cmd in ("new", "update", "done", "approve"):
+    elif a.cmd in ("new", "update", "done", "approve", "act"):
         print(f"{r['id']} {r['status']}" + (" (existing)" if r.get("existing") else ""))  # quiet by default; --json for the full row
     else:
         print(json.dumps(r, indent=1))
