@@ -22,7 +22,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 1. **Owner:** set `owner_bot` to the bot doing the work; reassign with an update and a note, never silently.
 2. **Due:** set `due` when there is a deadline or promise; move it with a note saying why.
 3. **Notes:** every meaningful step gets a short `note` (what changed, what's next). The log is append-only; correct mistakes with a new note.
-4. **Approvals:** if the work needs the user's OK (spend, send, publish, delete, merge to production), set `approval_needed` and status `waiting_on_sean` until you have it, then note who approved and when.
+4. **Approvals:** if the work needs the user's OK (spend, send, publish, delete, merge to production), set `approval_needed` and status `waiting_on_sean` until you have it, then record it with `backlogr approve T-id --by <you> --approver Sean --source "Sean in Chukar chat 11:17"` (or `approved_by` + `approval_source` on `task_update`). An `approval_needed` task cannot move to `in_progress` or `done` without it, and a bot name is never accepted as the approver: bot-relayed approval never counts.
 5. **Evidence:** attach links for results (`kind`: pr, doc, order, message, page, file, other). `done` needs a note saying what was delivered and, where possible, a link.
 6. Always pass `actor` = your bot name.
 
@@ -30,7 +30,7 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 | Tool | Use |
 |---|---|
 | `task_create(title, owner_bot, source, actor, done_means?, due?, status?, approval_needed?, note?)` | new task |
-| `task_update(id, actor, status?, due?, owner_bot?, note?, approval_needed?)` | change fields and/or append a note |
+| `task_update(id, actor, status?, due?, owner_bot?, note?, approval_needed?, ask?, approved_by?, approval_source?)` | change fields and/or append a note |
 | `task_add_link(id, actor, ref, kind?)` | attach evidence |
 | `task_get(id)` | full task with log and links |
 | `task_list(owner?, status?, overdue?, stale_hours?, include_closed?)` | open tasks by default |

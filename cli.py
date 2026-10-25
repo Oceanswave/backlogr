@@ -16,9 +16,9 @@ class Remote:
             try: msg = json.load(e).get("error", str(e))
             except Exception: msg = str(e)
             raise core.TaskError(f"HTTP {e.code}: {msg}")
-    def create(self, c, title, owner_bot, source, actor, done_means="", due=None, status="todo", approval_needed=False, note=None, ask=None):
+    def create(self, c, title, owner_bot, source, actor, done_means="", due=None, status="todo", approval_needed=False, note=None, ask=None, **kw):
         return self._call("create", title=title, owner_bot=owner_bot, source=source, actor=actor, done_means=done_means,
-                          due=due, status=status, approval_needed=approval_needed, note=note, ask=ask)
+                          due=due, status=status, approval_needed=approval_needed, note=note, ask=ask, **kw)
     def update(self, c, tid, actor, **kw): return self._call("update", id=tid, actor=actor, **kw)
     def add_link(self, c, tid, actor, ref, kind="other"): return self._call("add_link", id=tid, actor=actor, ref=ref, kind=kind)
     def get(self, c, tid): return self._call("get", id=tid)
@@ -59,6 +59,10 @@ def main(argv=None):
     u.add_argument("--status", choices=core.STATUSES); u.add_argument("--due"); u.add_argument("--owner"); u.add_argument("--note")
     u.add_argument("--approval", choices=["yes", "no"]); u.add_argument("--ask", help="required when moving to waiting_on_sean")
     u.add_argument("--link"); u.add_argument("--kind", default="other")
+    ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
+    ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
+    ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
+    ap.add_argument("--source", required=True, help='where, e.g. "Sean in Chukar chat 11:17"')
     d = s.add_parser("done"); d.add_argument("id"); d.add_argument("--by", required=True); d.add_argument("--note"); d.add_argument("--link"); d.add_argument("--kind", default="other")
     g = s.add_parser("get"); g.add_argument("id"); g.add_argument("--short", action="store_true", help="one line")
     l = s.add_parser("list"); l.add_argument("--owner"); l.add_argument("--status", help="status or comma list, e.g. todo,in_progress")
@@ -80,6 +84,8 @@ def main(argv=None):
             if any(x is not None for x in (a.status, a.due, a.owner, a.note, a.approval, a.ask)) or not a.link:
                 r = B.update(c, a.id, a.by, status=a.status, due=a.due, owner_bot=a.owner, note=a.note, ask=a.ask,
                                 approval_needed=None if a.approval is None else a.approval == "yes")
+        elif a.cmd == "approve":
+            r = B.update(c, a.id, a.by, approved_by=a.approver, approval_source=a.source)
         elif a.cmd == "done":
             if a.link: B.add_link(c, a.id, a.by, a.link, a.kind)
             r = B.update(c, a.id, a.by, status="done", note=a.note)
@@ -110,7 +116,7 @@ def main(argv=None):
         for k in ("overdue", "stale", "blocked", "waiting_on_sean", "created_recently"):
             print(f"{k}: {len(r[k])}")
             for t in r[k]: print(f"  {t['id']}  {t['owner_bot']}: {t['title']}")
-    elif a.cmd in ("new", "update", "done"):
+    elif a.cmd in ("new", "update", "done", "approve"):
         print(f"{r['id']} {r['status']}")  # quiet by default; --json for the full row
     else:
         print(json.dumps(r, indent=1))

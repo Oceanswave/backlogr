@@ -26,17 +26,21 @@ def _c(): return core.connect()
 @mcp.tool()
 def task_create(title: str, owner_bot: str, source: str, actor: str, done_means: str = "",
                 due: Optional[str] = None, status: str = "todo", approval_needed: bool = False,
-                note: Optional[str] = None, ask: Optional[str] = None) -> dict:
-    """Create a task. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. actor: your bot name."""
+                note: Optional[str] = None, ask: Optional[str] = None,
+                approved_by: Optional[str] = None, approval_source: Optional[str] = None) -> dict:
+    """Create a task. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what Sean must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. actor: your bot name."""
     return core.create(_c(), title=title, owner_bot=owner_bot, source=source, actor=actor,
-                       done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask)
+                       done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask,
+                       approved_by=approved_by, approval_source=approval_source)
 
 @mcp.tool()
 def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional[str] = None,
                 owner_bot: Optional[str] = None, note: Optional[str] = None,
-                approval_needed: Optional[bool] = None, ask: Optional[str] = None) -> dict:
-    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what Sean must decide or do). actor: your bot name."""
-    return core.update(_c(), id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask)
+                approval_needed: Optional[bool] = None, ask: Optional[str] = None,
+                approved_by: Optional[str] = None, approval_source: Optional[str] = None) -> dict:
+    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what Sean must decide or do). Record a human approval with approved_by (the human, never a bot) and approval_source (e.g. "Sean in Chukar chat 11:17"); an approval_needed task cannot move to in_progress or done without one. actor: your bot name."""
+    return core.update(_c(), id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask,
+                       approved_by=approved_by, approval_source=approval_source)
 
 @mcp.tool()
 def task_add_link(id: str, actor: str, ref: str, kind: str = "other") -> dict:

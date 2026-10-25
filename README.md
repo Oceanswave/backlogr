@@ -34,6 +34,8 @@ Expose it only on a private network or behind an authenticating reverse proxy, f
 | `BACKLOGR_EXPORT` | nightly export, CLI `export` | `~/backlogr/exports/backlogr-export.json` |
 | `BACKLOGR_URL` | CLI remote mode (and client configs below) | unset = local DB |
 | `BACKLOGR_TOKEN_FILE` | CLI remote mode | `~/backlogr/.token` |
+| `BACKLOGR_BOTS` | bot names that can never be `approved_by` (owners and actors in the DB are always included) | none |
+| `BACKLOGR_APPROVERS` | if set, the only names accepted as `approved_by` | unset |
 
 ## Install the MCP
 Server name `backlogr`, streamable HTTP at `$BACKLOGR_URL/mcp`, header `Authorization: Bearer <token>`. Keep the token in an env var or a mode-600 file; never commit it or paste it into chat.
@@ -84,6 +86,7 @@ backlogr done T-abc123 --by Mint --note "delivered"
 backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all]
 backlogr flags [--stale 24] [--recent 24]
 backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
+backlogr approve T-id --by Forge --approver Sean --source "Sean in chat 11:17"   # human approval record
 backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]      backlogr import file.json --by Chukar      backlogr export [--path P]
 ```

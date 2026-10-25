@@ -33,6 +33,9 @@ CREATE INDEX IF NOT EXISTS t_owner ON tasks(owner_bot);
 ADDED_COLUMNS = [
     ("ask", "TEXT"),            # exact one-line ask for Sean while waiting_on_sean
     ("waiting_since", "TEXT"),  # when the row last entered waiting_on_sean
+    ("approved_by", "TEXT"),    # the human who approved (never a bot)
+    ("approved_at", "TEXT"),    # when they approved
+    ("approval_source", "TEXT"),  # where, e.g. "Sean in Chukar chat 11:17"
 ]
 
 def _migrate(c):
@@ -85,8 +88,40 @@ def _need_ask(ask):
     if not (ask or "").strip():
         raise TaskError("ask is required when status is waiting_on_sean: one line saying exactly what Sean must decide or do")
 
+def _bots(c, *extra):
+    """Names that can never approve: BACKLOGR_BOTS, every owner and actor seen in the DB, plus extra (actor, owner)."""
+    names = {x.strip().lower() for x in os.environ.get("BACKLOGR_BOTS", "").split(",")}
+    names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT owner_bot FROM tasks")}
+    names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT actor FROM updates")}
+    names |= {(x or "").strip().lower() for x in extra}
+    return names - {""}
+
+def _check_approver(c, approved_by, *bots):
+    who = (approved_by or "").strip()
+    if not who: raise TaskError("approved_by is required: the human who approved")
+    if who.lower() in _bots(c, *bots):
+        raise TaskError(f"approved_by {who!r} is a bot; bot-relayed approval never counts")
+    approvers = {x.strip().lower() for x in os.environ.get("BACKLOGR_APPROVERS", "").split(",") if x.strip()}
+    if approvers and who.lower() not in approvers:
+        raise TaskError(f"approved_by must be one of BACKLOGR_APPROVERS, not {who!r}")
+    return who
+
+def _approval(c, approved_by, approval_source, *bots):
+    who = _check_approver(c, approved_by, *bots)
+    src = (approval_source or "").strip()
+    if not src: raise TaskError('approval_source is required with approved_by, e.g. "Sean in Chukar chat 11:17"')
+    return who, src
+
+def _gate(c, status, need, approved_by, *bots):
+    """approval_needed rows cannot be in_progress or done without a valid human approver (rechecked every time)."""
+    if need and status in ("in_progress", "done"):
+        if not approved_by:
+            raise TaskError(f"approval_needed: record a human approval (approved_by, approval_source) before moving to {status}")
+        _check_approver(c, approved_by, *bots)
+
 def create(c, title, owner_bot, source, actor, done_means="", due=None, status="todo",
-           approval_needed=False, note=None, links=None, created_at=None, id=None, ask=None):
+           approval_needed=False, note=None, links=None, created_at=None, id=None, ask=None,
+           approved_by=None, approval_source=None, approved_at=None):
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
     _check(status, source, due)
@@ -94,10 +129,15 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
     ts = created_at or now()
     c.execute("BEGIN IMMEDIATE")
     try:
+        if approved_by is not None or approval_source:
+            approved_by, approval_source = _approval(c, approved_by, approval_source, actor, owner_bot)
+        _gate(c, status, approval_needed, approved_by, actor, owner_bot)
         tid = id or _new_id(c)
         row = dict(id=tid, title=title, done_means=done_means or "", owner_bot=owner_bot, due=due, status=status,
                    source=source, approval_needed=int(bool(approval_needed)), created_at=ts, updated_at=ts,
-                   ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None)
+                   ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None,
+                   approved_by=approved_by, approved_at=(approved_at or ts) if approved_by else None,
+                   approval_source=approval_source if approved_by else None)
         c.execute(f"INSERT INTO tasks({','.join(row)}) VALUES({','.join('?'*len(row))})", tuple(row.values()))
         c.execute("INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)",
                   (tid, ts, actor, note or f"created ({status})"))
@@ -114,28 +154,42 @@ def _require(c, tid):
         raise TaskError(f"no task {tid}")
 
 def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
-           approval_needed=None, title=None, done_means=None, ask=None):
+           approval_needed=None, title=None, done_means=None, ask=None,
+           approved_by=None, approval_source=None, approved_at=None):
     if not actor: raise TaskError("actor is required")
     _check(status, None, due)
-    _require(c, tid)
-    cur = get(c, tid)
-    ask = (ask or "").strip() or None
-    entering_wait = status == "waiting_on_sean" and cur["status"] != "waiting_on_sean"
-    if entering_wait: _need_ask(ask)
-    changes, parts = {}, []
-    if entering_wait: changes["waiting_since"] = now()
-    for k, v in (("status", status), ("due", due), ("owner_bot", owner_bot),
-                 ("title", title), ("done_means", done_means), ("ask", ask)):
-        if v is not None and v != cur[k]:
-            changes[k] = v; parts.append(f"{k}: {cur[k]} -> {v}")
-    if approval_needed is not None and bool(approval_needed) != cur["approval_needed"]:
-        changes["approval_needed"] = int(bool(approval_needed))
-        parts.append(f"approval_needed -> {bool(approval_needed)}")
-    if not changes and not note:
-        raise TaskError("nothing to update: give a field change or a note")
-    ts = now()
+    # validate and write under one write lock so concurrent updates cannot slip past the gates
     c.execute("BEGIN IMMEDIATE")
     try:
+        _require(c, tid)
+        cur = get(c, tid)
+        ask = (ask or "").strip() or None
+        entering_wait = status == "waiting_on_sean" and cur["status"] != "waiting_on_sean"
+        if entering_wait: _need_ask(ask)
+        changes, parts = {}, []
+        owners = (actor, cur["owner_bot"], owner_bot)
+        if approved_by is not None or approval_source:
+            who, src = _approval(c, approved_by, approval_source, *owners)
+            changes.update(approved_by=who, approved_at=approved_at or now(), approval_source=src)
+            parts.append(f"approved by {who} ({src})")
+        # Either the current or the requested flag counts, so clearing approval_needed is itself gated.
+        need = cur["approval_needed"] or bool(approval_needed)
+        if cur["approval_needed"] and approval_needed is not None and not approval_needed:
+            # clearing the requirement needs the same human approval, whatever the status
+            _gate(c, "done", True, changes.get("approved_by") or cur.get("approved_by"), *owners)
+        if (status is not None and status != cur["status"]) or approval_needed is not None:
+            _gate(c, status or cur["status"], need, changes.get("approved_by") or cur.get("approved_by"), *owners)
+        if entering_wait: changes["waiting_since"] = now()
+        for k, v in (("status", status), ("due", due), ("owner_bot", owner_bot),
+                     ("title", title), ("done_means", done_means), ("ask", ask)):
+            if v is not None and v != cur[k]:
+                changes[k] = v; parts.append(f"{k}: {cur[k]} -> {v}")
+        if approval_needed is not None and bool(approval_needed) != cur["approval_needed"]:
+            changes["approval_needed"] = int(bool(approval_needed))
+            parts.append(f"approval_needed -> {bool(approval_needed)}")
+        if not changes and not note:
+            raise TaskError("nothing to update: give a field change or a note")
+        ts = now()
         if changes:
             sets = ", ".join(f"{k}=?" for k in changes)
             c.execute(f"UPDATE tasks SET {sets}, updated_at=? WHERE id=?",

@@ -66,11 +66,12 @@ def test_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "cli.db"))
     assert cli.main(["--json","new","Buy tee","--owner","Mint","--source","via_chukar","--by","Chukar","--approval"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
+    assert cli.main(["approve", tid, "--by","Mint","--approver","Sean","--source","chat"]) == 0
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--link","https://x","--kind","order"]) == 0
     assert cli.main(["done", tid, "--by","Mint","--note","arrived"]) == 0
     capsys.readouterr()
     assert cli.main(["--json","get", tid]) == 0
-    t = json.loads(capsys.readouterr().out); assert t["status"] == "done" and len(t["updates"]) == 4
+    t = json.loads(capsys.readouterr().out); assert t["status"] == "done" and len(t["updates"]) == 5
     assert cli.main(["list","--all"]) == 0 and "1 task(s)" in capsys.readouterr().out
     assert cli.main(["flags"]) == 0
     with pytest.raises(SystemExit): cli.main(["update", tid, "--by","x","--status","bogus"])
@@ -240,3 +241,51 @@ def test_migrates_v1_db(tmp_path):
     assert {n for n, _ in core.ADDED_COLUMNS} <= cols
     assert core.get(c, "T-old")["title"] == "t"
     core.connect(p)  # idempotent
+
+def test_approval_record(c, tmp_path, monkeypatch, capsys):
+    t = mk(c, approval_needed=True)
+    with pytest.raises(core.TaskError, match="approval"):
+        core.update(c, t["id"], "Forge", status="in_progress")
+    for bot in ("Forge", "chukar", "Mint "):  # owner, an actor seen in the log, and BACKLOGR_BOTS
+        monkeypatch.setenv("BACKLOGR_BOTS", "Mint")
+        with pytest.raises(core.TaskError, match="bot"):
+            core.update(c, t["id"], "Forge", approved_by=bot, approval_source="relayed")
+    with pytest.raises(core.TaskError, match="required"):
+        core.update(c, t["id"], "Forge", approved_by="  ", approval_source="x")
+    with pytest.raises(core.TaskError):  # cannot approve and start in one step as a bot either
+        mk(c, approval_needed=True, status="in_progress", approved_by="Forge", approval_source="x")
+    assert core.get(c, t["id"])["approved_by"] is None
+    monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
+    assert cli.main(["approve", t["id"], "--by", "Forge", "--approver", "Sean", "--source", "Sean in Chukar chat 11:17"]) == 0
+    r = core.get(c, t["id"])
+    assert (r["approved_by"], r["approval_source"]) == ("Sean", "Sean in Chukar chat 11:17") and r["approved_at"]
+    assert "approved by Sean" in r["updates"][-1]["note"]
+    assert core.update(c, t["id"], "Forge", status="in_progress")["status"] == "in_progress"
+    monkeypatch.setenv("BACKLOGR_APPROVERS", "Sean")
+    with pytest.raises(core.TaskError, match="APPROVERS"):
+        core.update(c, t["id"], "Forge", approved_by="Bob", approval_source="x")
+    monkeypatch.delenv("BACKLOGR_APPROVERS")
+    # review findings: toggles cannot bypass, new owner cannot self-approve, allowlist never admits a bot,
+    # stored approvers are rechecked, and a source is required
+    v = mk(c, title="v"); core.update(c, v["id"], "Forge", status="in_progress")
+    with pytest.raises(core.TaskError, match="approval"):
+        core.update(c, v["id"], "Forge", approval_needed=True)
+    w = mk(c, title="w", approval_needed=True)
+    with pytest.raises(core.TaskError, match="approval"):
+        core.update(c, w["id"], "Forge", approval_needed=False)  # clearing while todo is gated too
+    with pytest.raises(core.TaskError, match="approval"):
+        core.update(c, w["id"], "Forge", status="done", approval_needed=False)
+    with pytest.raises(core.TaskError, match="bot"):
+        mk(c, title="self", owner_bot="Nova", approval_needed=True, status="done", approved_by="Nova", approval_source="x")
+    monkeypatch.setenv("BACKLOGR_APPROVERS", "Forge,Sean")
+    with pytest.raises(core.TaskError, match="bot"):
+        core.update(c, w["id"], "Chukar", approved_by="Forge", approval_source="x")
+    monkeypatch.delenv("BACKLOGR_APPROVERS")
+    core.update(c, w["id"], "Chukar", approved_by="Pat", approval_source="chat")
+    monkeypatch.setenv("BACKLOGR_BOTS", "Mint,Pat")
+    with pytest.raises(core.TaskError, match="bot"):
+        core.update(c, w["id"], "Forge", status="in_progress")
+    with pytest.raises(core.TaskError, match="approval_source"):
+        core.update(c, w["id"], "Forge", approved_by="Sean")
+    u = mk(c, title="no approval needed")
+    assert core.update(c, u["id"], "Forge", status="in_progress")["status"] == "in_progress"
