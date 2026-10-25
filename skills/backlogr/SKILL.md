@@ -92,3 +92,52 @@ restore can write files/DBs: use only the explicitly authorized destination.
 For machine output, use returned IDs; bracketed optional flags above are usage
 notation, not literal shell arguments. Legacy `via_chukar`, `waiting_on_sean`,
 `sean`, and `task_sean` remain stable regardless of configured owner names.
+
+## Rules and Playbooks (1.5.0)
+
+Store reusable requirements and group them into playbooks. Record the work on a
+task first. Rules need user-supplied IDs and nonempty rule text. Duplicate IDs
+require explicit replacement. Playbook IDs and linked rule IDs must exist;
+imports can create both together. Tests are stored, never executed by Backlogr.
+
+| MCP tool (also HTTP API operation) | Use |
+|---|---|
+| `rule_list(playbook?, testable?, category?)` | list rules; filters combine with AND |
+| `rule_get(id)` | full rule including creation metadata |
+| `rule_add(id, rule, title?, test?, evidence?, source?, testable?, category?, applies_to?, playbook_id?, actor?="owner", replace?=false)` | create or explicitly replace a full rule; always pass your bot name as actor |
+| `rule_untested()` | every rule with testable=false, including descriptive test text |
+| `playbook_list()` | all playbooks with linked rules |
+| `playbook_get(id)` | one playbook with `rule_ids` and embedded `rules` |
+| `playbook_add(id, name, skill?, test?, description?, rule_ids?)` | upsert playbook; unknown rule IDs fail |
+| `rules_import(items, actor)` | atomic `{rules: [...], playbooks: [...]}` upsert; created/updated/unchanged counts |
+
+```bash
+backlogr rules add M1 --rule "Examples must run." --title "Check examples" --test "python -m pytest" --evidence "test output" --source "project guide" --category quality --by Agent
+backlogr playbooks add P-check --name "Example checks" --rules M1 --skill example-check --test "python -m pytest"
+backlogr rules add M2 --rule "Review wording." --test "UNTESTED: manual review" --playbook P-check --by Agent
+backlogr rules list --playbook P-check --testable yes --json
+backlogr rules list --untested
+backlogr rules list --category quality --testable no
+backlogr rules get M1
+backlogr rules untested
+backlogr rules add M1 --rule "Examples must run." --test "python -m pytest" --replace --by Agent
+backlogr rules import rules.json --by Agent --json
+backlogr playbooks list
+backlogr playbooks get P-check --json
+```
+
+`--json` works globally or after any subcommand. Rule add also accepts
+`--applies-to` and `--testable yes|no`. Replacement preserves `created_at` and
+`created_by`, but resets omitted editable fields to defaults. Empty tests or
+case-insensitive `UNTESTED` prefixes always derive testable=false; true with an
+empty test is an error. CLI `rules untested` and `rules list --untested`, MCP
+`rule_untested`, and API `POST /api/rule_untested` return every rule with
+testable=false, including rules explicitly added or imported with false despite
+descriptive test text. Rules with testable=true are excluded.
+
+A primary `playbook_id` implies a membership; additional many-to-many links are
+allowed. Playbook add preserves links if `rule_ids` is omitted, otherwise replaces
+additional links while retaining primary memberships. Imports take an `items`
+object, not a file path; the CLI reads the file. Re-importing identical records
+returns only unchanged counts and preserves timestamps. See
+[import and storage details](../../docs/RULES_PLAYBOOKS.md).

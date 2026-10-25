@@ -36,6 +36,14 @@ class Remote:
     def sean_queue(self, c): return self._call("sean")
     def stale(self, c, hours=2): return self._call("stale", hours=hours)
     def bulk_import(self, c, items, actor): return self._call("import", items=items, actor=actor)
+    def rule_list(self, c, **args): return self._call("rule_list", **args)
+    def rule_get(self, c, **args): return self._call("rule_get", **args)
+    def rule_add(self, c, **args): return self._call("rule_add", **args)
+    def rule_untested(self, c, **args): return self._call("rule_untested", **args)
+    def playbook_list(self, c, **args): return self._call("playbook_list", **args)
+    def playbook_get(self, c, **args): return self._call("playbook_get", **args)
+    def playbook_add(self, c, **args): return self._call("playbook_add", **args)
+    def rules_import(self, c, **args): return self._call("rules_import", **args)
     def export(self, c, path=None):
         data = self._call("export_data"); path = path or core.EXPORT_PATH; tmp = path + ".tmp"
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -87,7 +95,10 @@ def doctor():
                 if not required <= columns: raise core.TaskError("schema columns missing")
                 version = c.execute("PRAGMA user_version").fetchone()[0]
                 if version != core.SCHEMA_VERSION: raise core.TaskError("schema version mismatch")
-                for table, fields in (("updates", {"seq", "task_id", "ts", "actor", "note"}), ("links", {"seq", "task_id", "ts", "ref", "kind"})):
+                for table, fields in (("updates", {"seq", "task_id", "ts", "actor", "note"}), ("links", {"seq", "task_id", "ts", "ref", "kind"}),
+                                      ("rules", {"id", "title", "rule", "test", "evidence", "source", "testable", "category", "applies_to", "playbook_id", "created_at", "updated_at", "created_by"}),
+                                      ("playbooks", {"id", "name", "skill", "test", "description", "created_at", "updated_at"}),
+                                      ("playbook_rules", {"playbook_id", "rule_id"})):
                     if not fields <= {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
                         raise core.TaskError(f"schema columns missing: {table}")
             print(f"DB writable: OK; schema version {version}, columns: OK")
@@ -144,6 +155,27 @@ def main(argv=None):
     i = s.add_parser("import"); i.add_argument("file"); i.add_argument("--by", required=True)
     i.add_argument("--restore", action="store_true", help="restore trusted snapshots verbatim (local only)")
     s.add_parser("export").add_argument("--path")
+    for section in ('rules', 'playbooks'):
+        group_parser = s.add_parser(section)
+        commands = group_parser.add_subparsers(dest='operation', required=True)
+        def command(name): return commands.add_parser(name, parents=[jp])
+        listing = command('list')
+        getting = command('get'); getting.add_argument('id')
+        adding = command('add'); adding.add_argument('id')
+        if section == 'rules':
+            listing.add_argument('--playbook'); listing.add_argument('--category')
+            listing.add_argument('--untested', action='store_true'); listing.add_argument('--testable', choices=['yes', 'no'])
+            command('untested')
+            importing = command('import'); importing.add_argument('file'); importing.add_argument('--by', required=True)
+            adding.add_argument('--rule', required=True); adding.add_argument('--title', default='')
+            adding.add_argument('--evidence', default=''); adding.add_argument('--source', default='')
+            adding.add_argument('--category', default=''); adding.add_argument('--applies-to', default='')
+            adding.add_argument('--playbook', dest='playbook_id'); adding.add_argument('--testable', choices=['yes', 'no'])
+            adding.add_argument('--replace', action='store_true'); adding.add_argument('--by', default=core.owner())
+        else:
+            adding.add_argument('--name', required=True); adding.add_argument('--skill', default='')
+            adding.add_argument('--description', default=''); adding.add_argument('--rules')
+        adding.add_argument('--test', default='')
     a = p.parse_args(argv); a.json = getattr(a, "json", False)
     if a.cmd == "doctor": return doctor()
     c = None
@@ -151,7 +183,29 @@ def main(argv=None):
         if a.cmd == "import" and a.restore and os.environ.get("BACKLOGR_URL"):
             raise core.TaskError("--restore is only available in local mode (unset BACKLOGR_URL)")
         B, c = backend()
-        if a.cmd == "new":
+        if a.cmd in ('rules', 'playbooks'):
+            prefix = 'rule' if a.cmd == 'rules' else 'playbook'
+            args = {}
+            if a.operation == 'import':
+                with open(a.file) as f: args = dict(items=json.load(f), actor=a.by)
+                op = 'rules_import'
+            else:
+                op = prefix + '_' + a.operation
+                if a.operation == 'get': args = dict(id=a.id)
+                elif a.operation == 'list' and a.cmd == 'rules':
+                    args = dict(playbook=a.playbook, category=a.category,
+                                testable=None if a.testable is None else a.testable == 'yes')
+                elif a.operation == 'add':
+                    if a.cmd == 'rules':
+                        args = {k: getattr(a, k) for k in ('id', 'rule', 'title', 'test', 'evidence', 'source', 'category', 'applies_to', 'playbook_id', 'replace')}
+                        args.update(actor=a.by, testable=None if a.testable is None else a.testable == 'yes')
+                    else:
+                        args = {k: getattr(a, k) for k in ('id', 'name', 'skill', 'test', 'description')}
+                        args['rule_ids'] = [v.strip() for v in a.rules.split(',') if v.strip()] if a.rules is not None else None
+            r = getattr(B, op)(c, **args)
+            if a.cmd == 'rules' and a.operation == 'list' and a.untested:
+                r = [v for v in r if not v['testable']]
+        elif a.cmd == "new":
             r = B.create(c, a.title, a.owner, a.source, a.by, a.done_means, a.due, a.status, a.approval, a.note, ask=a.ask,
                          **({"evidence": a.evidence} if a.evidence else {}), **({"test_results": a.test} if a.test else {}),
                          **({"key": a.key} if a.key else {}))

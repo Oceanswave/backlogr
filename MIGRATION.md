@@ -102,3 +102,16 @@ Set `BACKLOGR_OWNER` to the person's name on the server and CLI clients; it defa
 API callers must send only parameters exposed by the corresponding MCP tool. Unknown fields now return 400, including fields starting with `_`. Import items may still carry IDs and timestamps. API bodies larger than 1 MiB return 413; split larger imports into smaller batches or use the local CLI.
 
 The existing additive column migration is unchanged. Databases with SQLite `user_version=0` are marked as schema version 1 on connection. Run `backlogr doctor` after upgrading to check configuration, schema, and connectivity. Use local `backlogr import export.json --by Bot --restore` (no `BACKLOGR_URL`) for trusted recovery with task fields, history, and links preserved verbatim, bypassing creation gates. Remote `--restore` is rejected. Normal CLI, API, and MCP imports enforce approval, evidence, and test gates, including for snapshots; existing IDs are skipped.
+
+## v1.5.0
+
+Back up the database before upgrading. On connection, the existing idempotent
+schema setup creates `rules`, `playbooks`, and the many-to-many `playbook_rules`
+table and advances `PRAGMA user_version` from 0 or 1 to 2. Existing tasks, links,
+and append-only updates are unchanged. Restart and run `backlogr doctor` to
+validate the tables and schema version. Repeated starts do not duplicate rows.
+No new environment variables are required. SQLite backups include all tables;
+task JSON exports do not include rules/playbooks. See
+[Rules and Playbooks](docs/RULES_PLAYBOOKS.md) for bulk import and recovery.
+Downgrading code leaves the additive tables in place; restoring the pre-upgrade
+backup is the clean rollback, and loses writes made after that backup.

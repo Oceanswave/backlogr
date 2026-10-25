@@ -3,9 +3,10 @@ import base64, hashlib, hmac, secrets, time
 from urllib.parse import urlencode
 import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
+from contextlib import contextmanager
 
-__version__ = "1.4.0"
-SCHEMA_VERSION = 1
+__version__ = "1.5.0"
+SCHEMA_VERSION = 2
 
 def owner():
     return os.environ.get("BACKLOGR_OWNER", "owner")
@@ -17,6 +18,21 @@ SOURCES = ("direct_to_bot", "via_chukar", "bot_initiated")
 OPEN = ("todo", "in_progress", "waiting_on_sean", "blocked")
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS playbooks(
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, skill TEXT NOT NULL DEFAULT '',
+ test TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rules(
+ id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', rule TEXT NOT NULL CHECK(length(trim(rule)) > 0),
+ test TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+ testable INTEGER NOT NULL CHECK(testable IN (0,1)), category TEXT NOT NULL DEFAULT '',
+ applies_to TEXT NOT NULL DEFAULT '', playbook_id TEXT REFERENCES playbooks(id),
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT NOT NULL,
+ CHECK(testable=0 OR (length(trim(test)) > 0 AND upper(substr(trim(test),1,8)) != 'UNTESTED')));
+CREATE TABLE IF NOT EXISTS playbook_rules(
+ playbook_id TEXT NOT NULL REFERENCES playbooks(id), rule_id TEXT NOT NULL REFERENCES rules(id),
+ PRIMARY KEY(playbook_id, rule_id));
+CREATE INDEX IF NOT EXISTS rule_playbooks ON playbook_rules(rule_id);
 CREATE TABLE IF NOT EXISTS used_links(
  nonce TEXT PRIMARY KEY, task_id TEXT NOT NULL, action TEXT NOT NULL, used_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks(
@@ -82,7 +98,7 @@ def connect(path=None):
         c.execute("PRAGMA foreign_keys=ON")
         c.executescript(SCHEMA)
         _migrate(c)
-        if c.execute("PRAGMA user_version").fetchone()[0] == 0:
+        if c.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
             c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     except Exception:
         c.close()
@@ -587,3 +603,166 @@ def use_link(c, params, text=None):
     except Exception:
         c.execute("ROLLBACK")
         raise
+
+
+# Rules and playbooks share savepoints so bulk imports are atomic, including links.
+@contextmanager
+def _rules_transaction(c):
+    outer = not c.in_transaction
+    c.execute('BEGIN IMMEDIATE' if outer else 'SAVEPOINT rules_write')
+    try:
+        yield
+        c.execute('COMMIT' if outer else 'RELEASE rules_write')
+    except Exception:
+        if outer: c.execute('ROLLBACK')
+        else:
+            c.execute('ROLLBACK TO rules_write')
+            c.execute('RELEASE rules_write')
+        raise
+
+
+def _text(value, field, required=False):
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise TaskError(f'{field} must be a nonempty string' if required else f'{field} must be a string')
+    return value
+
+
+def rule_get(c, id):
+    _text(id, 'id', True)
+    row = c.execute('SELECT * FROM rules WHERE id=?', (id,)).fetchone()
+    if row is None: raise TaskError(f'unknown rule: {id}')
+    result = dict(row)
+    result['testable'] = bool(result['testable'])
+    return result
+
+
+def rule_list(c, playbook=None, testable=None, category=None):
+    if testable is not None and type(testable) is not bool: raise TaskError('testable must be a boolean')
+    if playbook is not None: _text(playbook, 'playbook', True)
+    if category is not None: _text(category, 'category')
+    clauses, values = [], []
+    if playbook is not None:
+        clauses.append('id IN (SELECT rule_id FROM playbook_rules WHERE playbook_id=?)'); values.append(playbook)
+    if testable is not None:
+        clauses.append('testable=?'); values.append(testable)
+    if category is not None:
+        clauses.append('category=?'); values.append(category)
+    where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+    return [rule_get(c, row[0]) for row in c.execute('SELECT id FROM rules' + where + ' ORDER BY id', values)]
+
+
+def rule_untested(c):
+    """Return every rule whose testable flag is false."""
+    return rule_list(c, testable=False)
+
+
+def rule_add(c, id, rule, title='', test='', evidence='', source='', testable=None,
+             category='', applies_to='', playbook_id=None, actor='owner', replace=False):
+    fields = dict(id=id, title=title, rule=rule, test=test, evidence=evidence, source=source,
+                  category=category, applies_to=applies_to)
+    for field, value in fields.items(): _text(value, field, field in ('id', 'rule'))
+    _text(actor, 'actor', True)
+    if testable is not None and type(testable) is not bool: raise TaskError('testable must be a boolean')
+    if type(replace) is not bool: raise TaskError('replace must be a boolean')
+    if testable is True and not test.strip(): raise TaskError('testable=true requires a test')
+    fields['testable'] = bool(test.strip() and not test.strip().upper().startswith('UNTESTED') and testable is not False)
+    if playbook_id is not None: _text(playbook_id, 'playbook_id', True)
+    fields['playbook_id'] = playbook_id
+    with _rules_transaction(c):
+        if playbook_id is not None: playbook_get(c, playbook_id)
+        exists = c.execute('SELECT id FROM rules WHERE id=?', (id,)).fetchone()
+        old = rule_get(c, id) if exists else None
+        if old and not replace: raise TaskError(f'duplicate rule id: {id}; use replace')
+        if old and all(old[k] == v for k, v in fields.items()): return old
+        ts = now()
+        if old:
+            assignments = ','.join(f'{k}=?' for k in fields if k != 'id')
+            c.execute(f'UPDATE rules SET {assignments},updated_at=? WHERE id=?',
+                      [v for k, v in fields.items() if k != 'id'] + [ts, id])
+            if old['playbook_id'] and old['playbook_id'] != playbook_id:
+                c.execute('DELETE FROM playbook_rules WHERE playbook_id=? AND rule_id=?', (old['playbook_id'], id))
+                c.execute('UPDATE playbooks SET updated_at=? WHERE id=?', (ts, old['playbook_id']))
+        else:
+            fields.update(created_at=ts, updated_at=ts, created_by=actor)
+            c.execute(f"INSERT INTO rules ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", list(fields.values()))
+        if playbook_id:
+            added = c.execute('INSERT OR IGNORE INTO playbook_rules VALUES (?,?)', (playbook_id, id)).rowcount
+            if added: c.execute('UPDATE playbooks SET updated_at=? WHERE id=?', (ts, playbook_id))
+        return rule_get(c, id)
+
+
+def playbook_get(c, id):
+    _text(id, 'id', True)
+    row = c.execute('SELECT * FROM playbooks WHERE id=?', (id,)).fetchone()
+    if row is None: raise TaskError(f'unknown playbook: {id}')
+    result = dict(row)
+    result['rule_ids'] = [r[0] for r in c.execute('SELECT rule_id FROM playbook_rules WHERE playbook_id=? ORDER BY rule_id', (id,))]
+    result['rules'] = [rule_get(c, rid) for rid in result['rule_ids']]
+    return result
+
+
+def playbook_list(c):
+    return [playbook_get(c, r[0]) for r in c.execute('SELECT id FROM playbooks ORDER BY id')]
+
+
+def playbook_add(c, id, name, skill='', test='', description='', rule_ids=None):
+    fields = dict(id=id, name=name, skill=skill, test=test, description=description)
+    for field, value in fields.items(): _text(value, field, field in ('id', 'name'))
+    if rule_ids is not None and (not isinstance(rule_ids, list) or any(not isinstance(r, str) for r in rule_ids)):
+        raise TaskError('rule_ids must be a list of strings')
+    with _rules_transaction(c):
+        exists = c.execute('SELECT id FROM playbooks WHERE id=?', (id,)).fetchone()
+        old = playbook_get(c, id) if exists else None
+        # Primary membership always implies a link; explicit links can span playbooks.
+        primary = [r[0] for r in c.execute('SELECT id FROM rules WHERE playbook_id=?', (id,))]
+        ids = sorted(set((rule_ids if rule_ids is not None else (old['rule_ids'] if old else [])) + primary))
+        for rid in ids: rule_get(c, rid)
+        if old and all(old[k] == v for k, v in fields.items()) and old['rule_ids'] == ids: return old
+        ts = now()
+        c.execute('''INSERT INTO playbooks(id,name,skill,test,description,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,skill=excluded.skill,test=excluded.test,
+        description=excluded.description,updated_at=excluded.updated_at''', (id, name, skill, test, description, ts, ts))
+        c.execute('DELETE FROM playbook_rules WHERE playbook_id=?', (id,))
+        c.executemany('INSERT INTO playbook_rules VALUES (?,?)', [(id, rid) for rid in ids])
+        return playbook_get(c, id)
+
+
+def rules_import(c, items, actor):
+    """Atomically upsert a rules/playbooks object; counts are per record, excluding embedded rules."""
+    _text(actor, 'actor', True)
+    if not isinstance(items, dict) or set(items) - {'rules', 'playbooks'}: raise TaskError('expected rules/playbooks object')
+    for key in ('rules', 'playbooks'):
+        rows = items.get(key, [])
+        if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows): raise TaskError(f'{key} must be a list of objects')
+        ids = [r.get('id') for r in rows]
+        if any(not isinstance(i, str) or not i.strip() for i in ids) or len(set(ids)) != len(ids):
+            raise TaskError(f'{key} requires unique nonempty ids')
+    counts = dict(created=0, updated=0, unchanged=0)
+    with _rules_transaction(c):
+        before_rules = {r['id']: r for r in rule_list(c)}
+        before_books = {p['id']: p for p in playbook_list(c)}
+        try:
+            # Create shells first to resolve rule -> playbook references in the same file.
+            for p in items.get('playbooks', []):
+                if p['id'] not in before_books:
+                    playbook_add(c, **{k: v for k, v in p.items() if k != 'rule_ids'})
+            for row in items.get('rules', []):
+                r = dict(row)
+                if 'playbook' in r:
+                    alias = r.pop('playbook')
+                    if 'playbook_id' in r and r['playbook_id'] != alias: raise TaskError('conflicting playbook references')
+                    r['playbook_id'] = alias
+                if isinstance(r.get('applies_to'), list):
+                    if any(not isinstance(v, str) for v in r['applies_to']): raise TaskError('applies_to list must contain strings')
+                    r['applies_to'] = json.dumps(r['applies_to'], ensure_ascii=False)
+                rule_add(c, **r, actor=actor, replace=True)
+            for p in items.get('playbooks', []): playbook_add(c, **p)
+        except TypeError as e:
+            raise TaskError(f'invalid import fields: {e}') from e
+        for key, before, getter in (('rules', before_rules, rule_get), ('playbooks', before_books, playbook_get)):
+            for row in items.get(key, []):
+                old, new = before.get(row['id']), getter(c, row['id'])
+                ignored = {'created_at', 'updated_at', 'created_by', 'rules'}
+                changed = old and {k: v for k, v in old.items() if k not in ignored} != {k: v for k, v in new.items() if k not in ignored}
+                counts['created' if old is None else 'updated' if changed else 'unchanged'] += 1
+    return counts

@@ -112,8 +112,70 @@ def task_import(items: list[dict] | dict, actor: str) -> dict:
         return core.bulk_import(c, items, actor)
 
 
+@mcp.tool()
+def rule_list(playbook: Optional[str] = None, testable: Optional[bool] = None, category: Optional[str] = None) -> list:
+    """List rules with optional playbook, testability and category filters."""
+    with closing(_c()) as c:
+        return core.rule_list(c, playbook=playbook, testable=testable, category=category)
+
+@mcp.tool()
+def rule_get(id: str) -> dict:
+    """Get one rule."""
+    with closing(_c()) as c:
+        return core.rule_get(c, id=id)
+
+@mcp.tool()
+def rule_add(id: str, rule: str, title: str = '', test: str = '', evidence: str = '',
+             source: str = '', testable: Optional[bool] = None, category: str = '',
+             applies_to: str = '', playbook_id: Optional[str] = None,
+             actor: str = 'owner', replace: bool = False) -> dict:
+    """Add a rule; replace=true explicitly updates an existing ID. UNTESTED tests derive testable=false."""
+    with closing(_c()) as c:
+        return core.rule_add(c, id=id, rule=rule, title=title, test=test, evidence=evidence,
+                             source=source, testable=testable, category=category, applies_to=applies_to,
+                             playbook_id=playbook_id, actor=actor, replace=replace)
+
+@mcp.tool()
+def rule_untested() -> list:
+    """List every rule whose testable flag is false, including rules with test text."""
+    with closing(_c()) as c:
+        return core.rule_untested(c)
+
+@mcp.tool()
+def playbook_list() -> list:
+    """List playbooks with linked rules."""
+    with closing(_c()) as c:
+        return core.playbook_list(c)
+
+@mcp.tool()
+def playbook_get(id: str) -> dict:
+    """Get a playbook with linked rules embedded."""
+    with closing(_c()) as c:
+        return core.playbook_get(c, id=id)
+
+@mcp.tool()
+def playbook_add(id: str, name: str, skill: str = '', test: str = '', description: str = '', rule_ids: Optional[list[str]] = None) -> dict:
+    """Upsert a playbook and its rule links; unknown rule IDs are errors."""
+    with closing(_c()) as c:
+        return core.playbook_add(c, id=id, name=name, skill=skill, test=test, description=description, rule_ids=rule_ids)
+
+@mcp.tool()
+def rules_import(items: dict, actor: str) -> dict:
+    """Atomically import a rules/playbooks object; return created/updated/unchanged counts."""
+    with closing(_c()) as c:
+        return core.rules_import(c, items=items, actor=actor)
+
 # ---- plain JSON API used by the `backlogr` CLI (same auth) ----
 API = {
+    "rule_list": lambda c, a: core.rule_list(c, **a),
+    "rule_get": lambda c, a: core.rule_get(c, **a),
+    "rule_add": lambda c, a: core.rule_add(c, **a),
+    "rule_untested": lambda c, a: core.rule_untested(c, **a),
+    "playbook_list": lambda c, a: core.playbook_list(c, **a),
+    "playbook_get": lambda c, a: core.playbook_get(c, **a),
+    "playbook_add": lambda c, a: core.playbook_add(c, **a),
+    "rules_import": lambda c, a: core.rules_import(c, **a),
+
     "link": lambda c, a: (core.get(c, a["id"]), core.sign_link(a["id"], a["action"], a.get("ttl_seconds")))[1],
     "create": lambda c, a: core.create(c, **a),
     "update": lambda c, a: core.update(c, a.pop("id"), a.pop("actor"), **a),
@@ -189,7 +251,7 @@ async def action_page(scope, receive, send):
         if c is not None: c.close()
     return await response(scope, receive, send)
 
-API_FIELDS = {op: set(inspect.signature(globals()["task_" + op]).parameters)
+API_FIELDS = {op: set(inspect.signature(globals()[op if op.startswith(('rule_', 'playbook_', 'rules_')) else 'task_' + op]).parameters)
               for op in API if op != "export_data"}
 API_FIELDS["export_data"] = set()
 MAX_BODY = 1024 * 1024

@@ -4,8 +4,17 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+- Fix core, CLI, MCP, and API untested queries to return every rule with `testable=false`, including descriptive tests explicitly marked false on add or import; exclude `testable=true` rules.
 - Document disposable agent installation, contribution/CI workflow, private security reporting, architecture/schema, and all environment variables; link guides from README and AGENTS.
 - Align the agent skill with CLI/MCP behavior and replace personal deployment examples with generic placeholders while retaining compatibility identifiers and license attribution.
+
+## 1.5.0
+
+- Add Rules and Playbooks across core, CLI, MCP, and the authenticated HTTP API, with rule filters and embedded playbook rules.
+- Add idempotent SQLite schema version 2 migration and many-to-many rule memberships, preserving existing tasks and history.
+- Derive testability from test content, reject duplicate rule IDs without explicit replacement, and validate linked IDs.
+- Add atomic bulk rules/playbooks import with created/updated/unchanged counts and generic example fixtures.
+- Document CLI/MCP usage, import format, migration, and recovery; expand tests across all layers.
 
 ## 1.4.0
 

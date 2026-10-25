@@ -178,3 +178,44 @@ Links are bearer-like until expiry: anyone holding one can submit it. They
 are single use, but opening one does not consume it. Keep TTLs short, protect
 the secret, and serve only on a private network. Rotating the secret invalidates
 outstanding links.
+
+## Rules and Playbooks (1.5.0)
+
+Store reusable rules alongside tasks, and group them into playbooks with optional
+skill names and test commands. IDs are supplied by you. A rule needs nonempty
+`rule` text; its title and other descriptive fields are optional.
+
+```bash
+backlogr rules add M1 --title "Check examples" --rule "Examples must run." --test "python -m pytest" --category quality --by Agent
+backlogr playbooks add P-check --name "Example checks" --rules M1 --skill example-check --test "python -m pytest"
+backlogr rules list --playbook P-check --testable yes --json
+backlogr rules get M1
+backlogr rules untested
+backlogr playbooks list
+backlogr playbooks get P-check --json
+backlogr rules import tests/fixtures/rules-playbooks.json --by Agent --json
+```
+
+`rules add` accepts `--evidence`, `--source`, `--applies-to`, `--playbook`,
+`--testable yes|no`, and `--replace`. Duplicate rule IDs fail unless `--replace`
+is given; replacement supplies the full editable record, preserving creation
+metadata. `--by` defaults to `BACKLOGR_OWNER` for rule creation. Playbook add
+upserts by ID; `--description` is optional. An omitted `--rules` preserves links;
+an explicit list replaces additional links. Unknown rule/playbook references fail.
+
+A rule's `testable` defaults to true when it has a test. Empty or whitespace-only
+tests and tests starting with `UNTESTED` (case-insensitive, ignoring leading
+whitespace) always derive false. Explicit true with an empty test is rejected.
+`rules untested` and `rules list --untested` return every rule with
+`testable=false`, just like `rules list --testable no`. This includes empty tests,
+`UNTESTED` placeholders, and rules explicitly added or imported with
+`testable=false` despite descriptive test text. Rules with `testable=true` are
+excluded. MCP/API `rule_untested` uses the same flag-based filter.
+`rules list` also accepts `--category`. `--json` works at every command level.
+
+The same authenticated HTTP API and MCP expose `rule_list`, `rule_get`,
+`rule_add`, `rule_untested`, `playbook_list`, `playbook_get`, `playbook_add`, and
+`rules_import`. API operations use those exact names: POST to
+`$BACKLOGR_URL/api/rule_get` with `{"id":"M1"}`, for example. See the
+[agent skill](skills/backlogr/SKILL.md) for signatures and
+[import format](docs/RULES_PLAYBOOKS.md) for relationships and bulk import.

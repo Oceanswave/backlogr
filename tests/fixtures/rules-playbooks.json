@@ -1,0 +1,1 @@
+{"rules":[{"id":"M1","title":"Check examples","rule":"Examples must run.","test":"python -m pytest","category":"quality","playbook_id":"P-check"},{"id":"M2","rule":"Review wording.","test":"UNTESTED: manual review"}],"playbooks":[{"id":"P-check","name":"Example checks","skill":"example-check","test":"python -m pytest","rule_ids":["M1","M2"]}]}

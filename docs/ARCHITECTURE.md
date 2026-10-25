@@ -1,4 +1,4 @@
-# Architecture (1.4.0)
+# Architecture (1.5.0)
 
 ## Components and request flow
 
@@ -29,14 +29,17 @@ a SQLite backup once that day. See [configuration](CONFIGURATION.md) and
 
 `core.connect()` creates parent directories, opens SQLite with WAL, a 15-second
 busy timeout, and foreign keys enabled, creates missing schema objects, and adds
-missing task columns. `PRAGMA user_version` is initialized to schema version 1
-when zero; this is distinct from application version 1.4.0. `doctor` checks it.
+missing task columns. `PRAGMA user_version` advances from 0 or 1 to schema version 2
+after additive setup; this is distinct from application version 1.5.0. `doctor` checks it.
 
 | Table | Contents |
 |---|---|
 | `tasks` | `id` primary key (`T-` plus six hex digits), title, done_means, owner_bot, due, status, source, approval_needed, created_at, updated_at |
 | `updates` | autoincrement seq, task_id foreign key, ts, actor, note; triggers reject UPDATE and DELETE |
 | `links` | autoincrement seq, task_id foreign key, ts, ref, kind; attached evidence references |
+| `rules` | user-supplied text ID, title, required rule, test, evidence, source, testable, category, applies_to, nullable playbook_id, created_at, updated_at, created_by |
+| `playbooks` | user-supplied text ID, name, skill, test, description, created_at, updated_at |
+| `playbook_rules` | playbook_id and rule_id foreign keys; composite primary key |
 | `used_links` | nonce primary key, task_id, action, used_at; consumed action-link nonces |
 
 Additive task columns are `ask`, `waiting_since`, `approved_by`, `approved_at`,
@@ -77,3 +80,13 @@ mechanism; see [migration](../MIGRATION.md).
 
 The secret is independent of the API token. Anyone holding the URL can confirm
 its action; see [security](../SECURITY.md).
+
+## Rules and playbooks
+
+Core exposes `rule_list`, `rule_get`, `rule_add`, `rule_untested`, `playbook_list`,
+`playbook_get`, `playbook_add`, and `rules_import`. MCP tools and authenticated
+HTTP API operations have the same names. Rule writes and imports take an immediate
+write lock; nested operations use savepoints, so records and memberships commit
+or roll back together. Imports resolve playbooks before rules, then link rules,
+allowing references within one file. See [Rules and Playbooks](RULES_PLAYBOOKS.md)
+for fields, derivation, link semantics, and import counts.

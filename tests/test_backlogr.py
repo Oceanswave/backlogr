@@ -156,7 +156,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act","task_link"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act","task_link","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -164,6 +164,20 @@ def test_mcp_http_end_to_end(server):
                     assert json.loads(res.content[0].text)["blocked"][0]["id"] == tid
                     bad = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="nope"))
                     assert bad.isError
+                    imported = await s.call_tool("rules_import", {
+                        "items": {"rules": [{"id": "R-demo", "rule": "Check examples", "test": "UNTESTED"}],
+                                  "playbooks": [{"id": "P-demo", "name": "Checks", "rule_ids": ["R-demo"]}]},
+                        "actor": "Agent"})
+                    assert json.loads(imported.content[0].text)["created"] == 2
+                    for name, args in [("rule_list", {"playbook": "P-demo", "testable": False}),
+                                       ("rule_get", {"id": "R-demo"}), ("rule_untested", {}),
+                                       ("playbook_list", {}), ("playbook_get", {"id": "P-demo"}),
+                                       ("rule_add", {"id": "R-other", "rule": "Check", "test": "pytest"}),
+                                       ("playbook_add", {"id": "P-other", "name": "Other", "rule_ids": ["R-other"]})]:
+                        result = await s.call_tool(name, args)
+                        assert not result.isError, result
+                    bad_rule = await s.call_tool("rule_add", {"id": "R-demo", "rule": "Duplicate"})
+                    assert bad_rule.isError
         asyncio.run(go())
 
 def test_export_creates_parent_dir(c, tmp_path):
@@ -420,3 +434,22 @@ def test_act_undo_after_link_refused(c, monkeypatch):
     core.act(c, t["id"], "done")
     core.add_link(c, t["id"], "Forge", "https://example.com/pr/1", "pr")
     with pytest.raises(core.TaskError, match="nothing to undo"): core.act(c, t["id"], "undo")
+
+
+def test_cli_remote_rules(server, tmp_path, monkeypatch, capsys):
+    token = tmp_path / 'token'; token.write_text(TOK); token.chmod(0o600)
+    monkeypatch.setenv('BACKLOGR_URL', server)
+    monkeypatch.setenv('BACKLOGR_TOKEN_FILE', str(token))
+    def run(args):
+        assert cli.main(['--json'] + args) == 0
+        return json.loads(capsys.readouterr().out)
+    fixture = os.path.join(HERE, 'tests', 'fixtures', 'rules-playbooks.json')
+    assert run(['rules', 'import', fixture, '--by', 'Agent'])['created'] == 3
+    assert run(['rules', 'import', fixture, '--by', 'Agent'])['unchanged'] == 3
+    assert run(['rules', 'get', 'M1'])['testable'] is True
+    assert run(['rules', 'list', '--playbook', 'P-check', '--testable', 'yes'])[0]['id'] == 'M1'
+    assert run(['rules', 'untested'])[0]['id'] == 'M2'
+    assert run(['playbooks', 'list'])[0]['id'] == 'P-check'
+    assert len(run(['playbooks', 'get', 'P-check'])['rules']) == 2
+    assert run(['rules', 'add', 'R-extra', '--rule', 'Check'])['id'] == 'R-extra'
+    assert run(['playbooks', 'add', 'P-extra', '--name', 'Extra', '--rules', 'R-extra'])['rule_ids'] == ['R-extra']

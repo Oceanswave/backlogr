@@ -172,7 +172,7 @@ def test_doctor_and_version(db, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('BACKLOGR_TOKEN_FILE', str(token))
     assert cli.main(['doctor']) == 0
     out = capsys.readouterr().out
-    assert 'never-print-this' not in out and 'mode 600' in out and 'schema version 1' in out
+    assert 'never-print-this' not in out and 'mode 600' in out and f'schema version {core.SCHEMA_VERSION}' in out
     monkeypatch.setattr(core, 'DB_PATH', str(tmp_path))
     assert cli.main(['doctor']) == 1
     capsys.readouterr()
