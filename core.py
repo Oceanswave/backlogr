@@ -3,7 +3,7 @@ import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 from contextlib import contextmanager
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 SCHEMA_VERSION = 2
 
 def owner():

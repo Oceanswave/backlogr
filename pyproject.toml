@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "backlogr"
-version = "1.8.0"
+version = "1.9.0"
 description = "Backlogr: system of record for a team of AI agents' work (MCP server + CLI)"
 requires-python = ">=3.11"
 license = "MIT"
@@ -19,4 +19,4 @@ backlogr = "cli:main"
 backlogr-server = "server:main_entry"
 
 [tool.setuptools]
-py-modules = ["cli", "core", "server"]
+py-modules = ["cli", "core", "server", "dashboard"]

@@ -4,6 +4,12 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+## 1.9.0
+
+- Add a live, read-only `/dashboard` and `/dashboard.json`, reading tasks, rules, playbooks, and the last 48 hours of task history directly from SQLite on each request.
+- Replicate the Bot Team Dashboard layout with inline dark-theme styling, bot glyphs, category cards, and a 60-second refresh.
+- Accept the API bearer token or a nonempty Tailscale identity header for dashboard requests; enforce the Host allow-list and GET/HEAD only.
+
 ## 1.8.0
 
 - Remove signed action links: the public confirmation/direct-submit endpoint, CLI `link`, MCP `task_link`, signing and nonce handling, and link-only configuration.

@@ -192,3 +192,19 @@ The same authenticated HTTP API and MCP expose `rule_list`, `rule_get`,
 `$BACKLOGR_URL/api/rule_get` with `{"id":"M1"}`, for example. See the
 [agent skill](skills/backlogr/SKILL.md) for signatures and
 [import format](docs/RULES_PLAYBOOKS.md) for relationships and bulk import.
+
+## Live dashboard
+
+Open `/dashboard` on your Backlogr server (or `/backlogr/dashboard` under a
+`/backlogr` reverse-proxy prefix) for the live Bot Team Dashboard. The page reads
+SQLite on every request and refreshes every 60 seconds. It shows task counts,
+assignees, decisions waiting on Sean, category cards, the latest 40 finished
+tasks, up to 80 timeline events from the last 48 hours, and rules/playbooks.
+`/dashboard.json` serves the same computed model for other read-only clients.
+
+Both routes accept GET and HEAD only and require either the existing
+`Authorization: Bearer …` API credential or a nonempty `Tailscale-User-Login`
+header supplied by `tailscale serve`. The server must remain reachable only
+through localhost or the tailnet; any other proxy must strip client-supplied
+Tailscale identity headers. The existing `BACKLOGR_ALLOWED_HOSTS` configuration
+also applies. The dashboard has no task action controls or external assets.

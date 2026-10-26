@@ -5,10 +5,11 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 import core
+import dashboard
 from contextlib import closing
 import inspect
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 PORT = int(os.environ.get("BACKLOGR_PORT", "8796"))
 HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_HOSTS", "127.0.0.1").split(",") if h.strip()]
@@ -190,14 +191,37 @@ API_FIELDS["export_data"] = set()
 MAX_BODY = 1024 * 1024
 
 def build_app():
-    from starlette.responses import JSONResponse, PlainTextResponse
+    from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from starlette.requests import HTTPConnection
+    from mcp.server.transport_security import TransportSecurityMiddleware
     inner = mcp.streamable_http_app()
+    security = TransportSecurityMiddleware(mcp.settings.transport_security)
     async def app(scope, receive, send):
         if scope["type"] != "http":
             return await inner(scope, receive, send)
         path = scope["path"]
         if path == "/healthz":
             return await PlainTextResponse("ok")(scope, receive, send)
+        if path in ("/dashboard", "/dashboard.json"):
+            invalid = await security.validate_request(HTTPConnection(scope))
+            if invalid is not None:
+                return await invalid(scope, receive, send)
+            headers = HTTPConnection(scope).headers
+            bearer = headers.get("authorization", "")
+            authorized = bool(TOKEN) and hmac.compare_digest(bearer.encode(), f"Bearer {TOKEN}".encode())
+            if not authorized and not headers.get("tailscale-user-login", "").strip():
+                return await JSONResponse({"error": "unauthorized"}, status_code=401,
+                                          headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
+            if scope["method"] not in ("GET", "HEAD"):
+                return await PlainTextResponse("Method Not Allowed", status_code=405,
+                                               headers={"Allow": "GET, HEAD"})(scope, receive, send)
+            with closing(core.connect()) as c:
+                data = dashboard.load_data(c)
+            response = JSONResponse(data) if path.endswith(".json") else HTMLResponse(dashboard.render(data))
+            if scope["method"] == "HEAD":
+                response.body = b""
+            response.headers["Cache-Control"] = "no-store"
+            return await response(scope, receive, send)
         hdr = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
         if not TOKEN or not hmac.compare_digest(hdr.encode(), f"Bearer {TOKEN}".encode()):
             return await JSONResponse({"error": "unauthorized"}, status_code=401,
