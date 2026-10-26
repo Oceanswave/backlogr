@@ -41,8 +41,8 @@ id (`T-xxxxxx`), title, done_means (one line: what done looks like), owner_bot, 
 | `task_flags(stale_hours?, created_within_hours?)` | check-in view: overdue, stale, blocked, waiting_on_sean, created_recently |
 | `task_sean()` | everything waiting_on_sean, oldest first, with its exact ask and age |
 | `task_stale(hours?=2)` | in_progress rows with no note in N hours, grouped by owner |
-| `task_act(id, action, by?, reason?)` | human action: done, na, question, later, undo; `by` defaults to BACKLOGR_OWNER |
-| `task_link(id, action, ttl_seconds?)` | mint signed single-use done/na/question/later URL (requires link configuration) |
+| `task_act(id, action, by?, reason?)` | human action: done, na, question, later, reply, undo; `by` defaults to BACKLOGR_OWNER |
+| `task_link(id, action, ttl_seconds?)` | mint signed done/na/question/later (single-use) or reply (reusable) URL (requires link configuration) |
 | `task_import(items, actor)` | bulk create; each item takes task_create fields **except `actor`** (pass it once at the call level), plus optional `created_at` and `links` |
 
 ## CLI
@@ -72,14 +72,18 @@ backlogr doctor
 ## Human actions
 When a person says done, N/A, or asks a question about a task (for example the dashboard's `DASH T-x DONE|N/A: r|QUESTION: q`), use `backlogr act T-x done|na|question|later [--reason ...] [--by NAME]`, or `undo` to revert it. Check `backlogr flags --json` → `questions_for_owner` and answer the question with an update on your own task; that clears it.
 
-`question` and `later` require `--reason`; later only appends a note. `--by`
+`question`, `later`, and `reply` require `--reason`; later only appends a note.
+Reply preserves status, sets `open_question` for the owner bot, supports undo,
+and accepts at most 4000 characters. Use `backlogr link ID --action reply`
+(also included in `--all`) for a reply link. `--by`
 defaults to `BACKLOGR_OWNER` (default `owner`). Human names in `BACKLOGR_HUMANS`
 can attest completion with `act done`, subject to `BACKLOGR_APPROVERS`; this can
 supply missing approval and skip the test gate. These are workflow rules, not
 independent identity verification. `undo` requires no intervening task change.
 
 Action links require a separate `BACKLOGR_LINK_SECRET` and `BACKLOGR_PUBLIC_URL`.
-They authorize whoever holds the URL; GET shows confirmation and POST consumes it once.
+They authorize whoever holds the URL; GET shows confirmation. POST consumes done/na/question/later links once;
+reply links remain reusable until expiry.
 Keep links out of logs. Default TTL is 604800 seconds and link actor is literal
 `owner` unless `BACKLOGR_LINK_ACTOR` is set (independent of BACKLOGR_OWNER).
 

@@ -4,6 +4,14 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+## 1.7.0
+
+- Support signed GET action links with `go=1`, minimal escaped result pages, and idempotent repeat taps for completed done/N/A links; preserve confirmation forms without `go=1`.
+
+## 1.6.0
+
+- Add reusable signed reply links and reply actions with owner notifications, unchanged status, and undo support.
+
 - Fix core, CLI, MCP, and API untested queries to return every rule with `testable=false`, including descriptive tests explicitly marked false on add or import; exclude `testable=true` rules.
 - Document disposable agent installation, contribution/CI workflow, private security reporting, architecture/schema, and all environment variables; link guides from README and AGENTS.
 - Align the agent skill with CLI/MCP behavior and replace personal deployment examples with generic placeholders while retaining compatibility identifiers and license attribution.

@@ -88,7 +88,7 @@ def task_act(id: str, action: str, reason: Optional[str] = None, by: Optional[st
 
 @mcp.tool()
 def task_link(id: str, action: str, ttl_seconds: Optional[int] = None) -> str:
-    """Mint a single-use owner action link: done, na, question, or later."""
+    """Mint an owner action link: done/na/question/later (single-use) or reply (reusable)."""
     with closing(_c()) as c:
         core.get(c, id)
         return core.sign_link(id, action, ttl_seconds)
@@ -229,22 +229,44 @@ async def action_page(scope, receive, send):
         params = {key: values[0] for key, values in fields.items()}
         c = _c()
         task = core.verify_link(c, params)
-        if method == "POST":
+        saved = False
+        go = method == "GET" and params.get("go") == "1"
+        already = False
+        if method == "POST" or go:
             try:
                 task = core.use_link(c, params, params.get("text"))
-            except core.LinkError:
-                raise
+            except core.LinkError as error:
+                target = {"done": "done", "na": "declined"}.get(params["a"])
+                if not go or error.status != 409 or target is None:
+                    raise
+                task = core.get(c, params["t"])
+                if task["status"] != target:
+                    raise
+                already = True
             except core.TaskError:
-                raise core.LinkError(400, "Action could not be applied. Question and later require text.")
+                raise core.LinkError(400, "Action could not be applied. Question, later, and reply require text; reply is limited to 4000 characters.")
             response = page("<p>Action recorded.</p><p>Status: " + escape(task["status"]) + "</p>")
-        else:
+            saved = True
+        if go:
+            messages = {
+                "done": task["id"] + (" already done" if already else " marked done"),
+                "na": task["id"] + (" already N/A" if already else " recorded as N/A"),
+                "reply": "Reply saved on " + task["id"],
+            }
+            message = messages.get(params["a"], "Action recorded on " + task["id"])
+            note = "<p>Note: " + escape(params["text"]) + "</p>" if params.get("text") else ""
+            response = page("<h1>" + escape(message) + "</h1><p>" + escape(task["title"]) + "</p>" + note)
+        elif method == "GET" or params["a"] == "reply":
             hidden = "".join('<input type="hidden" name="' + key + '" value="' + escape(params[key], quote=True) + '">' for key in ("t", "a", "e", "n", "s"))
-            required = " required" if params["a"] in ("question", "later") else ""
-            response = page("<h1>" + escape(task["id"]) + ": " + escape(task["title"]) + "</h1><p>Status: " +
+            required = " required" if params["a"] in ("question", "later", "reply") else ""
+            label = "Your reply" if params["a"] == "reply" else "Reason, question, or note"
+            button = "Send" if params["a"] == "reply" else "Confirm"
+            notice = "<p>Reply saved. Status unchanged: " + escape(task["status"]) + "</p>" if saved else ""
+            response = page(notice + "<h1>" + escape(task["id"]) + ": " + escape(task["title"]) + "</h1><p>Status: " +
                             escape(task["status"]) + "</p><p>Action: " + escape(params["a"]) +
                             '</p><form method="post" action="act">' + hidden +
-                            '<label>Reason, question, or note<textarea name="text"' + required + ">" +
-                            escape(params.get("text", "")) + '</textarea></label><button type="submit">Confirm</button></form>')
+                            '<label>' + label + '<textarea name="text"' + required + ">" +
+                            escape("" if saved else params.get("text", "")) + '</textarea></label><button type="submit">' + button + '</button></form>')
     except core.LinkError as error:
         response = page("<p>" + escape(str(error)) + "</p>", error.status)
     finally:

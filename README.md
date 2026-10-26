@@ -170,12 +170,15 @@ backlogr link T-xxxxxx --all
 ```
 
 MCP clients can use `task_link(id, action, ttl_seconds?)`. Actions are `done`,
-`na`, `question`, and `later`. Opening a link only shows a confirmation form.
-Submitting it applies the action once. Question and later require text; later
+`na`, `question`, `later`, and `reply` (also included in `--all`). Opening a link only shows a confirmation form.
+Submitting it applies the action. Reply links are reusable until expiry; replies
+require text (maximum 4000 characters), preserve status, and set `open_question`
+for the owner bot. Use `backlogr act ID reply --reason "text"` from the CLI.
+Question and later require text; later
 adds a note without changing status. Actions can be undone through `backlogr act T-xxxxxx undo`.
 
-Links are bearer-like until expiry: anyone holding one can submit it. They
-are single use, but opening one does not consume it. Keep TTLs short, protect
+Links are bearer-like until expiry: anyone holding one can submit it. Links
+for done/na/question/later are single use; opening a link does not consume it. Keep TTLs short, protect
 the secret, and serve only on a private network. Rotating the secret invalidates
 outstanding links.
 

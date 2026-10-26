@@ -485,11 +485,12 @@ def export(c, path=None):
 
 # ---- act: one-call human actions (dashboard buttons) ----
 LINK_ACTIONS = ("done", "na", "question", "later")
-ACTS = (*LINK_ACTIONS, "undo")
+SIGNABLE_ACTIONS = (*LINK_ACTIONS, "reply")
+ACTS = (*SIGNABLE_ACTIONS, "undo")
 _ACT_FIELDS = ("status", "evidence", "test_results", "approved_by", "approved_at", "approval_source", "open_question")
 
 def act(c, tid, action, by=None, reason=None):
-    """done | na | question | later | undo, taken by a person (default BACKLOGR_OWNER). Notes start with "act <action>" in the log.
+    """done | na | question | later | reply | undo, taken by a person (default BACKLOGR_OWNER). Notes start with "act <action>" in the log.
     done: status done. If `by` is in BACKLOGR_HUMANS (and BACKLOGR_APPROVERS, when set) their word is the evidence,
     the tests gate is skipped and their approval is recorded if needed; otherwise the normal gates apply.
     na: status declined, reason in the note. question: status unchanged, open_question set for the owner bot.
@@ -529,6 +530,10 @@ def act(c, tid, action, by=None, reason=None):
         return update(c, tid, by, status="declined", note=f"act na by {by}" + (f": {reason}" if reason else ""),
                       _extra={"last_act": snap()}, _expect=seq)
     if not reason: raise TaskError(f"{action} text is required (--reason)")
+    if action == "reply":
+        if len(reason) > 4000: raise TaskError("reply text must be at most 4000 characters")
+        return update(c, tid, by, note=f"act reply by {by}: {reason}",
+                      _extra={"last_act": snap(), "open_question": reason}, _expect=seq)
     if action == "later":
         return update(c, tid, by, note=f"act later by {by}: {reason}",
                       _extra={"last_act": snap()}, _expect=seq)
@@ -556,7 +561,7 @@ def _link_sig(task, action, expiry, nonce):
 
 def sign_link(task, action, ttl_seconds=None, text=None):
     _link_secret()
-    if action not in LINK_ACTIONS:
+    if action not in SIGNABLE_ACTIONS:
         raise TaskError("Invalid link action")
     public = os.environ.get("BACKLOGR_PUBLIC_URL", "").rstrip("/")
     if not public:
@@ -575,7 +580,7 @@ def verify_link(c, params):
     _link_secret()
     task, action, expiry, nonce, sig = (params.get(k, "") for k in ("t", "a", "e", "n", "s"))
     expected = _link_sig(task, action, expiry, nonce)
-    if not hmac.compare_digest(sig.encode(), expected.encode()) or action not in LINK_ACTIONS or not nonce:
+    if not hmac.compare_digest(sig.encode(), expected.encode()) or action not in SIGNABLE_ACTIONS or not nonce:
         raise LinkError(403, "Invalid action link")
     try:
         expired = int(expiry) <= time.time()
@@ -591,11 +596,12 @@ def use_link(c, params, text=None):
     c.execute("BEGIN IMMEDIATE")
     try:
         verify_link(c, params)
-        try:
-            c.execute("INSERT INTO used_links VALUES(?,?,?,?)",
-                      (params["n"], params["t"], params["a"], now()))
-        except sqlite3.IntegrityError:
-            raise LinkError(409, "This link was already used")
+        if params["a"] in LINK_ACTIONS:
+            try:
+                c.execute("INSERT INTO used_links VALUES(?,?,?,?)",
+                          (params["n"], params["t"], params["a"], now()))
+            except sqlite3.IntegrityError:
+                raise LinkError(409, "This link was already used")
         result = act(c, params["t"], params["a"],
                      by=os.environ.get("BACKLOGR_LINK_ACTOR", "").strip() or "owner", reason=text)
         c.execute("COMMIT")

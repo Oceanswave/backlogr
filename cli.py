@@ -134,7 +134,7 @@ def main(argv=None):
     lk = s.add_parser("link", help="mint a single-use action link")
     lk.add_argument("id"); lk.add_argument("--ttl", type=int)
     group = lk.add_mutually_exclusive_group(required=True)
-    group.add_argument("--action", choices=core.LINK_ACTIONS); group.add_argument("--all", action="store_true")
+    group.add_argument("--action", choices=core.SIGNABLE_ACTIONS); group.add_argument("--all", action="store_true")
     ap = s.add_parser("approve", help="record a human approval on an approval_needed task")
     ap.add_argument("id"); ap.add_argument("--by", required=True, help="actor bot recording it")
     ap.add_argument("--approver", required=True, help="the human who approved (never a bot)")
@@ -218,7 +218,7 @@ def main(argv=None):
                                 approval_needed=None if a.approval is None else a.approval == "yes")
         elif a.cmd == "link":
             B.get(c, a.id)
-            r = {action: B.sign_link(a.id, action, a.ttl) for action in (core.LINK_ACTIONS if a.all else (a.action,))}
+            r = {action: B.sign_link(a.id, action, a.ttl) for action in (core.SIGNABLE_ACTIONS if a.all else (a.action,))}
         elif a.cmd == "act": r = B.act(c, a.id, a.action, a.by, a.reason)
         elif a.cmd == "approve":
             r = B.update(c, a.id, a.by, approved_by=a.approver, approval_source=a.source)
