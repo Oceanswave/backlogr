@@ -3,7 +3,7 @@
 A small, self-hosted system of record for a team of AI agents' work (research, purchases, edits, outreach, code). Agents talk to it over MCP or a CLI. Tasks are the objects; the MCP tool verbs are `task_*`. Rule: **no task, no work.**
 
 - Python, SQLite (WAL), append-only update log enforced by triggers.
-- MCP over streamable HTTP (or stdio), plus a JSON API used by the CLI. Bearer-token auth on API/MCP; `/healthz` is unauthenticated and optional `/act` links authorize via a separate signature.
+- MCP over streamable HTTP (or stdio), plus a JSON API used by the CLI. Bearer-token auth on API/MCP; `/healthz` is unauthenticated.
 - Nightly JSON export and SQLite backup inside the service.
 
 ## Documentation
@@ -32,7 +32,7 @@ Expose it only on a private network or behind an authenticating reverse proxy, f
 
 ## Configuration
 
-See the [complete reference](docs/CONFIGURATION.md) for all environment variables, including signed links and deployment settings.
+See the [complete reference](docs/CONFIGURATION.md) for all environment variables, including deployment settings.
 
 | Variable | Used by | Default |
 |---|---|---|
@@ -86,7 +86,7 @@ ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import, task_act, task_link.
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import, task_act.
 Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, ask (required when moving to waiting_on_sean), waiting_since, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
@@ -151,36 +151,6 @@ List pagination is optional: `--limit N --offset N` (MCP/API: `limit`, `offset`)
 Every act is logged in the history as `act <action> by <by>...`. Each act is checked inside the write lock. If the task changed after it was read, the act is refused with "retry". Names in `BACKLOGR_HUMANS` (comma-separated) never count as bots, even after they act on tasks. The HTTP API accepts only the parameters exposed by the corresponding MCP tool; unknown fields return HTTP 400 (`unknown field: x`). Request bodies over 1 MiB return HTTP 413.
 
 Dashboard mapping: `DASH T-x DONE` → `act T-x done`; `DASH T-x N/A[: r]` → `act T-x na --reason r`; `DASH T-x QUESTION: q` → `act T-x question --reason q`.
-
-## One-tap links
-
-Set `BACKLOGR_LINK_SECRET` to a separate random secret; it is never derived from
-`BACKLOGR_TOKEN`. Set `BACKLOGR_PUBLIC_URL` to the public base URL, including
-any proxy path. Without the link secret, minting and `/act` are disabled.
-`BACKLOGR_LINK_TTL` sets the default lifetime in seconds (604800, or seven days).
-`BACKLOGR_LINK_ACTOR` sets the recorded actor (default `owner`). For human attestation, configure `BACKLOGR_LINK_ACTOR=Operator` and `BACKLOGR_HUMANS=Operator` so the
-configured human action rules apply.
-
-Mint locally with the secret and public URL set, or remotely with the usual
-CLI connection settings:
-
-```
-backlogr link T-xxxxxx --action done --ttl 3600
-backlogr link T-xxxxxx --all
-```
-
-MCP clients can use `task_link(id, action, ttl_seconds?)`. Actions are `done`,
-`na`, `question`, `later`, and `reply` (also included in `--all`). Opening a link only shows a confirmation form.
-Submitting it applies the action. Reply links are reusable until expiry; replies
-require text (maximum 4000 characters), preserve status, and set `open_question`
-for the owner bot. Use `backlogr act ID reply --reason "text"` from the CLI.
-Question and later require text; later
-adds a note without changing status. Actions can be undone through `backlogr act T-xxxxxx undo`.
-
-Links are bearer-like until expiry: anyone holding one can submit it. Links
-for done/na/question/later are single use; opening a link does not consume it. Keep TTLs short, protect
-the secret, and serve only on a private network. Rotating the secret invalidates
-outstanding links.
 
 ## Rules and Playbooks (1.5.0)
 

@@ -1,4 +1,4 @@
-# Configuration (1.4.0)
+# Configuration (1.8.0)
 
 These are all `BACKLOGR_*` environment variables read by the Python application
 and shipped shell scripts. Defaults below apply when unset; an explicitly empty
@@ -31,10 +31,6 @@ an environment value).
 | `BACKLOGR_BOTS` | empty | Comma-separated bot names barred from approving. DB owners/actors and current actor/owner are also considered bots, except configured humans. |
 | `BACKLOGR_HUMANS` | empty | Comma-separated human names excluded from bot detection. Their `act done` can attest completion, skip the test gate, and supply missing approval, subject to approver restrictions. |
 | `BACKLOGR_APPROVERS` | empty (no explicit allowlist) | Comma-separated names allowed to approve; bot checks still apply. Human attestation is also restricted by this list when set. |
-| `BACKLOGR_LINK_SECRET` | empty (links disabled) | Separate HMAC secret for minting and verifying action links. Never derived from the API token. |
-| `BACKLOGR_PUBLIC_URL` | empty | Required when minting links; base URL including proxy path, with trailing slashes removed. Does not configure listeners or Host validation. |
-| `BACKLOGR_LINK_TTL` | `604800` | Integer seconds until link expiry (seven days); CLI `link --ttl` or tool `ttl_seconds` overrides it. No positive-value validation; nonpositive values yield expired links. |
-| `BACKLOGR_LINK_ACTOR` | `owner` | Recorded actor for signed-link actions. Unset, empty, or whitespace defaults to literal `owner`, independently of `BACKLOGR_OWNER`. |
 
 Human/bot/approver names are trimmed and compared case-insensitively. Names are
 workflow metadata, not authenticated individual identities. See

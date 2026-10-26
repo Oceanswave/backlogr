@@ -8,6 +8,8 @@ import core
 from contextlib import closing
 import inspect
 
+__version__ = "1.8.0"
+
 PORT = int(os.environ.get("BACKLOGR_PORT", "8796"))
 HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_HOSTS", "127.0.0.1").split(",") if h.strip()]
 TOKEN = os.environ.get("BACKLOGR_TOKEN", "")
@@ -85,13 +87,6 @@ def task_act(id: str, action: str, reason: Optional[str] = None, by: Optional[st
     """One-call action by a person (default BACKLOGR_OWNER), e.g. from dashboard buttons. action: later (note only; reason required) | done (status done; the person's word is the evidence) | na (status declined, reason in the note) | question (status unchanged; reason is the question, marked as open_question for the owner bot until the owner updates) | undo (reverts the last act if nothing changed since). Logged in the task history as "act <action> by <by>"."""
     with closing(_c()) as c:
         return core.act(c, id, action, by=by, reason=reason)
-
-@mcp.tool()
-def task_link(id: str, action: str, ttl_seconds: Optional[int] = None) -> str:
-    """Mint an owner action link: done/na/question/later (single-use) or reply (reusable)."""
-    with closing(_c()) as c:
-        core.get(c, id)
-        return core.sign_link(id, action, ttl_seconds)
 
 @mcp.tool()
 def task_sean() -> list:
@@ -176,7 +171,6 @@ API = {
     "playbook_add": lambda c, a: core.playbook_add(c, **a),
     "rules_import": lambda c, a: core.rules_import(c, **a),
 
-    "link": lambda c, a: (core.get(c, a["id"]), core.sign_link(a["id"], a["action"], a.get("ttl_seconds")))[1],
     "create": lambda c, a: core.create(c, **a),
     "update": lambda c, a: core.update(c, a.pop("id"), a.pop("actor"), **a),
     "add_link": lambda c, a: core.add_link(c, a["id"], a["actor"], a["ref"], a.get("kind", "other")),
@@ -190,89 +184,6 @@ API = {
     "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
 }
 
-async def action_page(scope, receive, send):
-    from html import escape
-    from urllib.parse import parse_qs
-    from starlette.responses import HTMLResponse
-    headers = {
-        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-        "X-Frame-Options": "DENY",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
-    }
-    def page(body, status=200):
-        return HTMLResponse("<!doctype html><html><head><title>Task action</title></head><body>" + body + "</body></html>",
-                            status_code=status, headers=headers)
-    c = None
-    try:
-        core._link_secret()
-        method = scope["method"]
-        if method not in ("GET", "POST"):
-            return await page("<p>Method not allowed</p>", 405)(scope, receive, send)
-        raw = scope.get("query_string", b"")
-        if method == "POST":
-            content_type = dict(scope.get("headers", [])).get(b"content-type", b"").split(b";")[0].strip().lower()
-            if content_type != b"application/x-www-form-urlencoded":
-                raise core.LinkError(400, "Expected form data")
-            raw = b""
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect": return
-                raw += message.get("body", b"")
-                if len(raw) > 16384: raise core.LinkError(413, "Form too large")
-                if not message.get("more_body"): break
-        try:
-            fields = parse_qs(raw.decode("utf-8"), keep_blank_values=True, max_num_fields=20)
-        except (ValueError, UnicodeError):
-            raise core.LinkError(400, "Invalid form")
-        if any(len(values) != 1 for values in fields.values()):
-            raise core.LinkError(403, "Invalid action link")
-        params = {key: values[0] for key, values in fields.items()}
-        c = _c()
-        task = core.verify_link(c, params)
-        saved = False
-        go = method == "GET" and params.get("go") == "1"
-        already = False
-        if method == "POST" or go:
-            try:
-                task = core.use_link(c, params, params.get("text"))
-            except core.LinkError as error:
-                target = {"done": "done", "na": "declined"}.get(params["a"])
-                if not go or error.status != 409 or target is None:
-                    raise
-                task = core.get(c, params["t"])
-                if task["status"] != target:
-                    raise
-                already = True
-            except core.TaskError:
-                raise core.LinkError(400, "Action could not be applied. Question, later, and reply require text; reply is limited to 4000 characters.")
-            response = page("<p>Action recorded.</p><p>Status: " + escape(task["status"]) + "</p>")
-            saved = True
-        if go:
-            messages = {
-                "done": task["id"] + (" already done" if already else " marked done"),
-                "na": task["id"] + (" already N/A" if already else " recorded as N/A"),
-                "reply": "Reply saved on " + task["id"],
-            }
-            message = messages.get(params["a"], "Action recorded on " + task["id"])
-            note = "<p>Note: " + escape(params["text"]) + "</p>" if params.get("text") else ""
-            response = page("<h1>" + escape(message) + "</h1><p>" + escape(task["title"]) + "</p>" + note)
-        elif method == "GET" or params["a"] == "reply":
-            hidden = "".join('<input type="hidden" name="' + key + '" value="' + escape(params[key], quote=True) + '">' for key in ("t", "a", "e", "n", "s"))
-            required = " required" if params["a"] in ("question", "later", "reply") else ""
-            label = "Your reply" if params["a"] == "reply" else "Reason, question, or note"
-            button = "Send" if params["a"] == "reply" else "Confirm"
-            notice = "<p>Reply saved. Status unchanged: " + escape(task["status"]) + "</p>" if saved else ""
-            response = page(notice + "<h1>" + escape(task["id"]) + ": " + escape(task["title"]) + "</h1><p>Status: " +
-                            escape(task["status"]) + "</p><p>Action: " + escape(params["a"]) +
-                            '</p><form method="post" action="act">' + hidden +
-                            '<label>' + label + '<textarea name="text"' + required + ">" +
-                            escape("" if saved else params.get("text", "")) + '</textarea></label><button type="submit">' + button + '</button></form>')
-    except core.LinkError as error:
-        response = page("<p>" + escape(str(error)) + "</p>", error.status)
-    finally:
-        if c is not None: c.close()
-    return await response(scope, receive, send)
-
 API_FIELDS = {op: set(inspect.signature(globals()[op if op.startswith(('rule_', 'playbook_', 'rules_')) else 'task_' + op]).parameters)
               for op in API if op != "export_data"}
 API_FIELDS["export_data"] = set()
@@ -285,8 +196,6 @@ def build_app():
         if scope["type"] != "http":
             return await inner(scope, receive, send)
         path = scope["path"]
-        if path == "/act":
-            return await action_page(scope, receive, send)
         if path == "/healthz":
             return await PlainTextResponse("ok")(scope, receive, send)
         hdr = dict(scope.get("headers") or []).get(b"authorization", b"").decode()

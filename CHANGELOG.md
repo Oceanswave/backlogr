@@ -4,6 +4,12 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+## 1.8.0
+
+- Remove signed action links: the public confirmation/direct-submit endpoint, CLI `link`, MCP `task_link`, signing and nonce handling, and link-only configuration.
+- Preserve task actions, evidence attachments, authenticated API/MCP, and health checks.
+- No destructive schema migration: existing `used_links` tables and their data remain untouched and unused; new databases no longer create the table. Schema version remains 2.
+
 ## 1.7.0
 
 - Support signed GET action links with `go=1`, minimal escaped result pages, and idempotent repeat taps for completed done/N/A links; preserve confirmation forms without `go=1`.

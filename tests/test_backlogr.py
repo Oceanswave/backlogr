@@ -81,8 +81,7 @@ TOK = "test-token-0123456789abcdef"
 @pytest.fixture
 def server(tmp_path):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    env = dict(os.environ, BACKLOGR_DB=str(tmp_path / "m.db"), BACKLOGR_PORT=str(port), BACKLOGR_TOKEN=TOK,
-               BACKLOGR_LINK_SECRET="test-secret", BACKLOGR_PUBLIC_URL=f"http://127.0.0.1:{port}")
+    env = dict(os.environ, BACKLOGR_DB=str(tmp_path / "m.db"), BACKLOGR_PORT=str(port), BACKLOGR_TOKEN=TOK)
     p = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try: socket.create_connection(("127.0.0.1", port), 0.2).close(); break
@@ -128,18 +127,8 @@ def test_cli_remote(server, tmp_path, monkeypatch, capsys):
     assert cli.main(["export","--path", str(tmp_path / "e.json")]) == 0
     assert len(json.load(open(tmp_path / "e.json"))["tasks"]) == 1
     capsys.readouterr()
-    assert cli.main(["link", tid, "--action", "later", "--ttl", "3600"]) == 0
-    url = capsys.readouterr().out.strip()
-    assert _req(url)[0] == 200
-    from urllib.parse import urlsplit, parse_qs, urlencode
-    import urllib.request
-    fields = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
-    fields["text"] = "Review tomorrow"
-    req = urllib.request.Request(urlsplit(url)._replace(query="").geturl(),
-                                 data=urlencode(fields).encode(),
-                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(req) as response:
-        assert response.status == 200
+    assert cli.main(["act", tid, "later", "--reason", "Review tomorrow"]) == 0
+    capsys.readouterr()
     assert cli.main(["get", tid, "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "blocked"
@@ -156,7 +145,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act","task_link","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))

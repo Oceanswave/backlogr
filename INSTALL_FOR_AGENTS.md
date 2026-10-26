@@ -1,4 +1,4 @@
-# Install Backlogr 1.4.0 for agents
+# Install Backlogr 1.8.0 for agents
 
 Requires Git, Python 3.11+, venv/pip, curl, and Bash on a Unix-like system.
 Replace `<repo-url>` with the public clone URL. Run the blocks in the same Bash
@@ -15,7 +15,7 @@ cd "$RELEASE_CHECK_DIR/repo"
 python3 -m venv "$RELEASE_CHECK_DIR/venv"
 . "$RELEASE_CHECK_DIR/venv/bin/activate"
 python -m pip install -e .
-backlogr --version  # expected: 1.4.0
+backlogr --version  # expected: 1.8.0
 ```
 
 ## Configure
@@ -39,7 +39,6 @@ export BACKLOGR_TOKEN_FILE="$RELEASE_CHECK_DIR/token"
 printf '%s\n' "$BACKLOGR_TOKEN" > "$BACKLOGR_TOKEN_FILE"
 chmod 600 "$BACKLOGR_TOKEN_FILE"
 export BACKLOGR_URL="http://127.0.0.1:$BACKLOGR_PORT"
-unset BACKLOGR_LINK_SECRET BACKLOGR_PUBLIC_URL BACKLOGR_LINK_TTL BACKLOGR_LINK_ACTOR
 unset BACKLOGR_HUMANS BACKLOGR_BOTS BACKLOGR_APPROVERS
 ```
 
@@ -48,16 +47,6 @@ The remote CLI reads `BACKLOGR_TOKEN_FILE`, **not** `BACKLOGR_TOKEN`. Without
 not load `.env` automatically; deployment examples are in
 [deploy/env.example](deploy/env.example) and [configuration](docs/CONFIGURATION.md).
 
-Optional: enable action links before starting the server. Use a separate secret:
-
-```bash
-export BACKLOGR_LINK_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export BACKLOGR_PUBLIC_URL="$BACKLOGR_URL"
-export BACKLOGR_LINK_TTL=3600
-export BACKLOGR_LINK_ACTOR=owner
-```
-
-`BACKLOGR_LINK_ACTOR` defaults independently to `owner`, not `BACKLOGR_OWNER`.
 Only configure `BACKLOGR_HUMANS`/`BACKLOGR_APPROVERS` deliberately; they affect
 completion and approval gates. See [security](SECURITY.md).
 
@@ -84,7 +73,7 @@ backlogr new "Verify disposable installation" --owner ReleaseAgent \
     --done-means "Server health and diagnostics succeed" --key release:install-check
 # expected: T-<six hex digits> todo
 backlogr doctor
-# expected: version 1.4.0, owner owner, mode remote, token file mode 600,
+# expected: version 1.8.0, owner owner, mode remote, token file mode 600,
 # healthz: OK, authenticated list: OK; exit status 0
 ```
 
@@ -102,7 +91,7 @@ kill "$BACKLOGR_SERVER_PID"
 wait "$BACKLOGR_SERVER_PID" || true
 trap - EXIT
 deactivate
-unset BACKLOGR_TOKEN BACKLOGR_LINK_SECRET
+unset BACKLOGR_TOKEN
 ```
 
 The disposable files remain in `$RELEASE_CHECK_DIR` for inspection. Remove that

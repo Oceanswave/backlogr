@@ -1,11 +1,9 @@
 """Backlogr core: SQLite system of record for all bot work."""
-import base64, hashlib, hmac, secrets, time
-from urllib.parse import urlencode
 import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 from contextlib import contextmanager
 
-__version__ = "1.5.0"
+__version__ = "1.8.0"
 SCHEMA_VERSION = 2
 
 def owner():
@@ -33,8 +31,6 @@ CREATE TABLE IF NOT EXISTS playbook_rules(
  playbook_id TEXT NOT NULL REFERENCES playbooks(id), rule_id TEXT NOT NULL REFERENCES rules(id),
  PRIMARY KEY(playbook_id, rule_id));
 CREATE INDEX IF NOT EXISTS rule_playbooks ON playbook_rules(rule_id);
-CREATE TABLE IF NOT EXISTS used_links(
- nonce TEXT PRIMARY KEY, task_id TEXT NOT NULL, action TEXT NOT NULL, used_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks(
  id TEXT PRIMARY KEY, title TEXT NOT NULL, done_means TEXT NOT NULL DEFAULT '',
  owner_bot TEXT NOT NULL, due TEXT, status TEXT NOT NULL DEFAULT 'todo',
@@ -484,9 +480,7 @@ def export(c, path=None):
     return {"path": path, "count": len(data["tasks"])}
 
 # ---- act: one-call human actions (dashboard buttons) ----
-LINK_ACTIONS = ("done", "na", "question", "later")
-SIGNABLE_ACTIONS = (*LINK_ACTIONS, "reply")
-ACTS = (*SIGNABLE_ACTIONS, "undo")
+ACTS = ("done", "na", "question", "later", "reply", "undo")
 _ACT_FIELDS = ("status", "evidence", "test_results", "approved_by", "approved_at", "approval_source", "open_question")
 
 def act(c, tid, action, by=None, reason=None):
@@ -539,76 +533,6 @@ def act(c, tid, action, by=None, reason=None):
                       _extra={"last_act": snap()}, _expect=seq)
     return update(c, tid, by, note=f"act question by {by} for {cur['owner_bot']}: {reason}",
                   _extra={"last_act": snap(), "open_question": reason}, _expect=seq)
-
-
-class LinkError(TaskError):
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
-
-
-def _link_secret():
-    secret = os.environ.get("BACKLOGR_LINK_SECRET", "")
-    if not secret:
-        raise LinkError(404, "Action links are disabled")
-    return secret.encode()
-
-
-def _link_sig(task, action, expiry, nonce):
-    message = f"v1|{task}|{action}|{expiry}|{nonce}".encode()
-    return base64.urlsafe_b64encode(hmac.new(_link_secret(), message, hashlib.sha256).digest()).decode().rstrip("=")
-
-
-def sign_link(task, action, ttl_seconds=None, text=None):
-    _link_secret()
-    if action not in SIGNABLE_ACTIONS:
-        raise TaskError("Invalid link action")
-    public = os.environ.get("BACKLOGR_PUBLIC_URL", "").rstrip("/")
-    if not public:
-        raise TaskError("BACKLOGR_PUBLIC_URL is required for action links")
-    try:
-        ttl = int(ttl_seconds if ttl_seconds is not None else os.environ.get("BACKLOGR_LINK_TTL", "604800"))
-    except (ValueError, TypeError):
-        raise TaskError("Link TTL must be an integer")
-    expiry, nonce = str(int(time.time()) + ttl), secrets.token_urlsafe(24)
-    params = dict(t=task, a=action, e=expiry, n=nonce, s=_link_sig(task, action, expiry, nonce))
-    if text is not None: params["text"] = text
-    return public + "/act?" + urlencode(params)
-
-
-def verify_link(c, params):
-    _link_secret()
-    task, action, expiry, nonce, sig = (params.get(k, "") for k in ("t", "a", "e", "n", "s"))
-    expected = _link_sig(task, action, expiry, nonce)
-    if not hmac.compare_digest(sig.encode(), expected.encode()) or action not in SIGNABLE_ACTIONS or not nonce:
-        raise LinkError(403, "Invalid action link")
-    try:
-        expired = int(expiry) <= time.time()
-    except ValueError:
-        raise LinkError(403, "Invalid action link")
-    if expired: raise LinkError(410, "This link has expired")
-    if not c.execute("SELECT 1 FROM tasks WHERE id=?", (task,)).fetchone():
-        raise LinkError(404, "Task not found")
-    return get(c, task)
-
-
-def use_link(c, params, text=None):
-    c.execute("BEGIN IMMEDIATE")
-    try:
-        verify_link(c, params)
-        if params["a"] in LINK_ACTIONS:
-            try:
-                c.execute("INSERT INTO used_links VALUES(?,?,?,?)",
-                          (params["n"], params["t"], params["a"], now()))
-            except sqlite3.IntegrityError:
-                raise LinkError(409, "This link was already used")
-        result = act(c, params["t"], params["a"],
-                     by=os.environ.get("BACKLOGR_LINK_ACTOR", "").strip() or "owner", reason=text)
-        c.execute("COMMIT")
-        return result
-    except Exception:
-        c.execute("ROLLBACK")
-        raise
 
 
 # Rules and playbooks share savepoints so bulk imports are atomic, including links.
