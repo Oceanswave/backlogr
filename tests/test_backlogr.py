@@ -7,7 +7,7 @@ def c(tmp_path):
     return core.connect(str(tmp_path / "t.db"))
 
 def mk(c, **kw):
-    a = dict(title="Research X", owner_bot="Forge", source="via_chukar", actor="Coordinator"); a.update(kw)
+    a = dict(title="Research X", owner_bot="Forge", source="via_coordinator", actor="Coordinator"); a.update(kw)
     return core.create(c, **a)
 
 def test_create_fields(c):
@@ -40,7 +40,7 @@ def test_list_filters_and_flags(c):
     old = (ref - dt.timedelta(hours=48)).isoformat()
     a = mk(c, title="overdue", due="2026-10-23", created_at=old)
     b = mk(c, title="blocked", owner_bot="Mint", status="blocked")
-    w = mk(c, title="wait", status="waiting_on_sean", ask="OK to spend $40?")
+    w = mk(c, title="wait", status="waiting_on_owner", ask="OK to spend $40?")
     d = mk(c, title="closed", status="done", due="2026-10-01", evidence="sha abc123")
     assert {t["title"] for t in core.list_tasks(c, ref=ref)} == {"overdue","blocked","wait"}
     assert [t["title"] for t in core.list_tasks(c, owner="mint", ref=ref)] == ["blocked"]
@@ -49,7 +49,7 @@ def test_list_filters_and_flags(c):
     assert len(core.list_tasks(c, include_closed=True, ref=ref)) == 4
     f = core.flags(c, stale_hours=24, created_within_hours=24, ref=ref)
     assert [t["title"] for t in f["blocked"]] == ["blocked"]
-    assert [t["title"] for t in f["waiting_on_sean"]] == ["wait"]
+    assert [t["title"] for t in f["waiting_on_owner"]] == ["wait"]
     assert "overdue" not in [t["title"] for t in f["created_recently"]]
     # same-day date-only due is not overdue
     mk(c, title="today", due="2026-10-24")
@@ -64,7 +64,7 @@ def test_import_and_export(c, tmp_path):
 
 def test_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "cli.db"))
-    assert cli.main(["--json","new","Buy tee","--owner","Mint","--source","via_chukar","--by","Coordinator","--approval"]) == 0
+    assert cli.main(["--json","new","Buy tee","--owner","Mint","--source","via_coordinator","--by","Coordinator","--approval"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
     assert cli.main(["approve", tid, "--by","Mint","--approver","Operator","--source","chat"]) == 0
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--link","https://x","--kind","order"]) == 0
@@ -115,7 +115,7 @@ def test_server_requires_token(tmp_path):
 def test_cli_remote(server, tmp_path, monkeypatch, capsys):
     tf = tmp_path / "tok"; tf.write_text(TOK + "\n")
     monkeypatch.setenv("BACKLOGR_URL", server); monkeypatch.setenv("BACKLOGR_TOKEN_FILE", str(tf))
-    assert cli.main(["--json","new","Remote","--owner","Mint","--source","via_chukar","--by","Coordinator"]) == 0
+    assert cli.main(["--json","new","Remote","--owner","Mint","--source","via_coordinator","--by","Coordinator"]) == 0
     tid = json.loads(capsys.readouterr().out)["id"]
     assert cli.main(["update", tid, "--by","Mint","--status","blocked","--link","https://x"]) == 0
     capsys.readouterr()
@@ -145,7 +145,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_sean","task_act","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_waiting","task_act","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))
@@ -176,7 +176,7 @@ def test_export_creates_parent_dir(c, tmp_path):
 
 def test_quiet_output(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
-    assert cli.main(["new","Quiet","--owner","Mint","--source","via_chukar","--by","Coordinator","--done-means","x"*300]) == 0
+    assert cli.main(["new","Quiet","--owner","Mint","--source","via_coordinator","--by","Coordinator","--done-means","x"*300]) == 0
     out = capsys.readouterr().out; tid = out.split()[0]
     assert out == f"{tid} todo\n"
     assert cli.main(["update", tid, "--by","Mint","--status","in_progress","--note","n"*500]) == 0
@@ -202,7 +202,7 @@ def test_list_real_filters(c, tmp_path, monkeypatch, capsys):
     with pytest.raises(core.TaskError): core.list_tasks(c, status="in_progress,bogus")
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "f.db"))
     for t, o in (("Open PR", "Forge"), ("Docs", "Forge"), ("PR elsewhere", "Mint")):
-        cli.main(["new", t, "--owner", o, "--source", "via_chukar", "--by", "Coordinator", "--status", "in_progress"])
+        cli.main(["new", t, "--owner", o, "--source", "via_coordinator", "--by", "Coordinator", "--status", "in_progress"])
     capsys.readouterr()
     assert cli.main(["list", "--owner", "Forge", "--status", "in_progress", "--q", "PR"]) == 0
     out = capsys.readouterr().out.splitlines()
@@ -224,30 +224,30 @@ def test_stale_detector(c, tmp_path, monkeypatch, capsys):
     core.update(c, a["id"], "Forge", note="still going")
     assert core.stale(c, hours=2)["count"] == 0
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "s.db"))
-    core.create(core.connect(), "cli old", "Mint", "via_chukar", "Coordinator", status="in_progress", created_at=three)
+    core.create(core.connect(), "cli old", "Mint", "via_coordinator", "Coordinator", status="in_progress", created_at=three)
     assert cli.main(["stale", "--hours", "2"]) == 0
     out = capsys.readouterr().out
     assert "Mint (1)" in out and "1 stale" in out
 
-def test_sean_queue(c, tmp_path, monkeypatch, capsys):
+def test_waiting_queue(c, tmp_path, monkeypatch, capsys):
     a = mk(c, title="buy tee")
-    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_sean")
-    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_sean", ask="  ")
-    with pytest.raises(core.TaskError): mk(c, title="x", status="waiting_on_sean")
+    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_owner")
+    with pytest.raises(core.TaskError): core.update(c, a["id"], "Mint", status="waiting_on_owner", ask="  ")
+    with pytest.raises(core.TaskError): mk(c, title="x", status="waiting_on_owner")
     old = (dt.datetime.now().astimezone() - dt.timedelta(hours=5)).isoformat(timespec="seconds")
-    b = mk(c, title="older", status="waiting_on_sean", ask="Pick venue A or B", created_at=old)
-    core.update(c, a["id"], "Mint", status="waiting_on_sean", ask="OK to spend $40 on the tee?")
+    b = mk(c, title="older", status="waiting_on_owner", ask="Pick venue A or B", created_at=old)
+    core.update(c, a["id"], "Mint", status="waiting_on_owner", ask="OK to spend $40 on the tee?")
     core.update(c, a["id"], "Mint", note="pinged")  # staying in waiting needs no new ask
     mk(c, title="not waiting", status="blocked")
-    q = core.sean_queue(c)
-    assert len(q) == len(core.list_tasks(c, status="waiting_on_sean")) == 2
+    q = core.waiting_queue(c)
+    assert len(q) == len(core.list_tasks(c, status="waiting_on_owner")) == 2
     assert [t["id"] for t in q] == [b["id"], a["id"]] and q[0]["ask"] == "Pick venue A or B" and q[0]["age_hours"] >= 4.9
     # legacy row (pre-migration, no ask) still counted
-    c.execute("UPDATE tasks SET status='waiting_on_sean', ask=NULL WHERE title='not waiting'")
-    assert len(core.sean_queue(c)) == 3
+    c.execute("UPDATE tasks SET status='waiting_on_owner', ask=NULL WHERE title='not waiting'")
+    assert len(core.waiting_queue(c)) == 3
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "q.db"))
-    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--status", "waiting_on_sean"]) == 2
-    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--status", "waiting_on_sean", "--ask", "Approve?"]) == 0
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_coordinator", "--by", "Coordinator", "--status", "waiting_on_owner"]) == 2
+    assert cli.main(["new", "x", "--owner", "Mint", "--source", "via_coordinator", "--by", "Coordinator", "--status", "waiting_on_owner", "--ask", "Approve?"]) == 0
     capsys.readouterr()
     assert cli.main(["sean"]) == 0
     out = capsys.readouterr().out; assert "Approve?" in out and "1 waiting on owner" in out
@@ -255,7 +255,7 @@ def test_sean_queue(c, tmp_path, monkeypatch, capsys):
 def test_migrates_v1_db(tmp_path):
     p = str(tmp_path / "v1.db"); old = sqlite3.connect(p)
     old.executescript(core.SCHEMA)  # 1.0.0 schema: no added columns
-    old.execute("INSERT INTO tasks VALUES('T-old','t','', 'Mint', NULL,'todo','via_chukar',0,'2026-10-25T10:00:00-04:00','2026-10-25T10:00:00-04:00')")
+    old.execute("INSERT INTO tasks VALUES('T-old','t','', 'Mint', NULL,'todo','via_coordinator',0,'2026-10-25T10:00:00-04:00','2026-10-25T10:00:00-04:00')")
     old.commit(); old.close()
     c = core.connect(p)
     cols = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
@@ -359,13 +359,13 @@ def test_idempotent_create(c, tmp_path, monkeypatch, capsys):
     with pytest.raises(sqlite3.IntegrityError):  # unique index backs the key
         c.execute("UPDATE tasks SET key='forge:pr-12' WHERE id=?", (mk(c, title="other")["id"],))
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "t.db"))
-    args = ["new", "Order printer ink", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator", "--key", "mint:ink"]
+    args = ["new", "Order printer ink", "--owner", "Mint", "--source", "via_coordinator", "--by", "Coordinator", "--key", "mint:ink"]
     assert cli.main(args) == 0; first = capsys.readouterr().out.split()[0]
     assert cli.main(args) == 0; out = capsys.readouterr().out
     assert out == f"{first} todo (existing)\n"
     d = mk(c, title="Order printer ink!")  # no key, near-identical title: created, with a warning
     assert d["id"] != first and any(first in w for w in d["warnings"])
-    assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_chukar", "--by", "Coordinator"]) == 0
+    assert cli.main(["new", "Order printer inks", "--owner", "Mint", "--source", "via_coordinator", "--by", "Coordinator"]) == 0
     assert "warning: similar title" in capsys.readouterr().err
     assert "warnings" not in mk(c, title="Something unrelated entirely")
 

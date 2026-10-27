@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import urllib.error
 from contextlib import closing
@@ -36,9 +37,9 @@ def test_owner_defaults(db, api, monkeypatch, capsys, name):
     if name != 'owner': monkeypatch.setenv('BACKLOGR_OWNER', name)
     monkeypatch.setenv('BACKLOGR_HUMANS', name)
     with pytest.raises(core.TaskError, match=f'what {name} must decide'):
-        core.create(db, 'x', 'bot', 'via_chukar', 'bot', status='waiting_on_sean')
+        core.create(db, 'x', 'bot', 'via_coordinator', 'bot', status='waiting_on_owner')
     for action in ('core', 'cli', 'mcp', 'api'):
-        t = core.create(db, action, 'bot', 'via_chukar', 'bot', approval_needed=True)
+        t = core.create(db, action, 'bot', 'via_coordinator', 'bot', approval_needed=True)
         if action == 'core': core.act(db, t['id'], 'done')
         elif action == 'cli': assert cli.main(['act', t['id'], 'done']) == 0
         elif action == 'mcp': server.task_act(t['id'], 'done')
@@ -75,13 +76,13 @@ def test_connections_closed(db, api, monkeypatch):
     def tracked():
         c = Tracked(); opened.append(c); return c
     monkeypatch.setattr(core, 'connect', tracked)
-    t = core.create(db, 'x', 'bot', 'via_chukar', 'bot')
-    calls = [lambda: server.task_create('new', 'bot', 'via_chukar', 'bot'),
+    t = core.create(db, 'x', 'bot', 'via_coordinator', 'bot')
+    calls = [lambda: server.task_create('new', 'bot', 'via_coordinator', 'bot'),
              lambda: server.task_update(t['id'], 'bot', note='n'),
              lambda: server.task_add_link(t['id'], 'bot', 'ref'),
              lambda: server.task_get(t['id']), lambda: server.task_list(),
              lambda: server.task_flags(), lambda: server.task_act(t['id'], 'question', reason='why'),
-             lambda: server.task_sean(), lambda: server.task_stale(),
+             lambda: server.task_waiting(), lambda: server.task_stale(),
              lambda: server.task_import([], 'bot')]
     for call in calls: call()
     with pytest.raises(core.TaskError): server.task_get('missing')
@@ -92,7 +93,7 @@ def test_connections_closed(db, api, monkeypatch):
 
 
 def test_link_failure_rolls_back(db):
-    t = core.create(db, 'x', 'bot', 'via_chukar', 'bot')
+    t = core.create(db, 'x', 'bot', 'via_coordinator', 'bot')
     with pytest.raises(sqlite3.IntegrityError): core.add_link(db, t['id'], None, 'ref')
     assert not db.in_transaction
     assert core.get(db, t['id'])['links'] == []
@@ -102,7 +103,7 @@ def test_link_failure_rolls_back(db):
 
 
 def test_pagination(db, api, capsys):
-    for n in range(5): core.create(db, f'item {n}', 'bot', 'via_chukar', 'bot', due=f'2026-11-0{n+1}')
+    for n in range(5): core.create(db, f'item {n}', 'bot', 'via_coordinator', 'bot', due=f'2026-11-0{n+1}')
     rows = core.list_tasks(db)
     assert core.list_tasks(db, limit=2, offset=1) == rows[1:3]
     assert core.list_tasks(db, offset=3) == rows[3:]
@@ -117,12 +118,12 @@ def test_pagination(db, api, capsys):
 
 
 def test_export_import_roundtrip(db, tmp_path):
-    t = core.create(db, 'restore', 'bot', 'via_chukar', 'bot', key='restore',
+    t = core.create(db, 'restore', 'bot', 'via_coordinator', 'bot', key='restore',
                     created_at='2026-01-01T00:00:00+00:00', done_means='tests pass')
     core.add_link(db, t['id'], 'bot', 'ref', 'doc')
     core.update(db, t['id'], 'bot', approved_by='Pat', approval_source='chat', evidence='sha', test_results={'unit': 'pass'})
     core.act(db, t['id'], 'question', by='Pat', reason='why?')
-    waiting = core.create(db, 'waiting', 'bot', 'via_chukar', 'bot', status='waiting_on_sean', ask='approve?')
+    waiting = core.create(db, 'waiting', 'bot', 'via_coordinator', 'bot', status='waiting_on_owner', ask='approve?')
     core.create(db, 'finished', 'bot', 'bot_initiated', 'bot', status='done', evidence='complete')
     path = str(tmp_path / 'export.json')
     core.export(db, path)
@@ -163,6 +164,7 @@ def test_cli_errors(db, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('BACKLOGR_TOKEN_FILE', str(token))
     def fail(*a, **kw): raise urllib.error.URLError('unreachable')
     monkeypatch.setattr(cli.urllib.request, 'urlopen', fail)
+    monkeypatch.setattr(cli._opener, 'open', fail)
     assert cli.main(['list']) == 2
     assert 'error:' in capsys.readouterr().err
 
@@ -191,10 +193,12 @@ def test_remote_doctor(db, api, tmp_path, monkeypatch, capsys):
         response_file = io.BytesIO(response.content); response_file.status = response.status_code
         return response_file
     monkeypatch.setattr(cli.urllib.request, 'urlopen', urlopen)
+    monkeypatch.setattr(cli._opener, 'open', urlopen)
     assert cli.main(['doctor']) == 0
     assert 'authenticated list: OK' in capsys.readouterr().out
     def fail(*a, **kw): raise urllib.error.URLError('unreachable')
     monkeypatch.setattr(cli.urllib.request, 'urlopen', fail)
+    monkeypatch.setattr(cli._opener, 'open', fail)
     assert cli.main(['doctor']) == 1
 
 
@@ -214,7 +218,7 @@ def test_doctor_schema_and_permissions(db, tmp_path, monkeypatch, capsys):
 
 def test_import_transport_formats(db, api):
     item = {'id': 'T-restore', 'created_at': '2026-01-01T00:00:00+00:00',
-            'title': 'restore', 'owner_bot': 'bot', 'source': 'via_chukar'}
+            'title': 'restore', 'owner_bot': 'bot', 'source': 'via_coordinator'}
     assert api.post('/api/import', json={'items': {'tasks': [item]}, 'actor': 'bot'}).json()['created'] == ['T-restore']
     snapshot = core.get(db, 'T-restore')
     assert server.task_import({'tasks': [snapshot]}, 'bot')['skipped'] == ['T-restore']
@@ -227,7 +231,7 @@ def test_import_transport_formats(db, api):
     ({'done_means': 'tests pass', 'evidence': 'result'}, 'test'),
 ])
 def test_snapshot_import_enforces_gates(db, api, transport, fields, error):
-    item = dict(id='T-snapshot', title='snapshot', owner_bot='bot', source='via_chukar',
+    item = dict(id='T-snapshot', title='snapshot', owner_bot='bot', source='via_coordinator',
                 status='done', updates=[], updated_at='2026-01-01T00:00:00+00:00', **fields)
     if transport == 'api':
         response = api.post('/api/import', json={'items': [item], 'actor': 'bot'})
@@ -243,7 +247,7 @@ def test_snapshot_import_enforces_gates(db, api, transport, fields, error):
 
 
 def test_local_cli_restore_roundtrip(db, tmp_path, monkeypatch, capsys):
-    task = core.create(db, 'snapshot', 'bot', 'via_chukar', 'bot', approval_needed=True)
+    task = core.create(db, 'snapshot', 'bot', 'via_coordinator', 'bot', approval_needed=True)
     core.add_link(db, task['id'], 'bot', 'result', 'doc')
     path = str(tmp_path / 'snapshot.json')
     core.export(db, path)
@@ -273,7 +277,7 @@ def test_api_cannot_enable_restore(api):
 
 @pytest.mark.parametrize('transport', ['api', 'mcp'])
 def test_snapshot_import_uses_create(db, api, transport):
-    task = core.create(db, 'original', 'bot', 'via_chukar', 'bot')
+    task = core.create(db, 'original', 'bot', 'via_coordinator', 'bot')
     snapshot = core.get(db, task['id'])
     snapshot['id'] = 'T-new-snapshot'
     snapshot['updates'] = [{'ts': snapshot['created_at'], 'actor': 'forged', 'note': 'forged history'}]
@@ -285,3 +289,56 @@ def test_snapshot_import_uses_create(db, api, transport):
     imported = core.get(db, 'T-new-snapshot')
     assert imported['updates'][0]['actor'] == 'importer'
     assert imported['updates'][0]['note'] == 'created (todo)'
+
+
+def test_legacy_names_are_accepted_and_migrated(db, api, tmp_path, capsys):
+    t = core.create(db, 'legacy', 'bot', 'via_chukar', 'bot', status='waiting_on_sean', ask='ok?')
+    assert (t['status'], t['source']) == ('waiting_on_owner', 'via_coordinator')
+    assert core.update(db, t['id'], 'bot', status='todo')['status'] == 'todo'
+    assert core.update(db, t['id'], 'bot', status='waiting_on_sean', ask='ok?')['status'] == 'waiting_on_owner'
+    assert [x['id'] for x in core.list_tasks(db, status='waiting_on_sean', source='via_chukar')] == [t['id']]
+    assert [x['id'] for x in api.post('/api/sean', json={}).json()] == [t['id']]
+    assert cli.main(['sean']) == 0 and t['id'] in capsys.readouterr().out
+    assert cli.main(['new', 'x', '--owner', 'bot', '--source', 'via_chukar', '--by', 'bot']) == 0
+    # a pre-2.0 database with the old stored names is rewritten on connect
+    path = str(tmp_path / 'v2.db')
+    with closing(core.connect(path)) as c:
+        c.execute("INSERT INTO tasks(id,title,owner_bot,status,source,created_at,updated_at) "
+                  "VALUES('T-v2','old','bot','waiting_on_sean','via_chukar','2026-01-01','2026-01-01')")
+        c.execute('PRAGMA user_version=2')
+    with closing(core.connect(path)) as c:
+        row = core.get(c, 'T-v2', with_log=False)
+        assert (row['status'], row['source']) == ('waiting_on_owner', 'via_coordinator')
+        assert c.execute('PRAGMA user_version').fetchone()[0] == core.SCHEMA_VERSION
+
+
+def test_people_who_act_can_still_approve(db, monkeypatch):
+    monkeypatch.setenv('BACKLOGR_OWNER', 'Pat')
+    monkeypatch.delenv('BACKLOGR_HUMANS', raising=False)
+    t = core.create(db, 'gated', 'bot', 'direct_to_bot', 'bot', approval_needed=True)
+    core.act(db, t['id'], 'later', reason='after lunch')                  # owner acts: stays a human
+    core.act(db, t['id'], 'question', by='Alex', reason='which one?')    # another person acts
+    assert core.update(db, t['id'], 'bot', approved_by='Pat', approval_source='Pat in chat')['approved_by'] == 'Pat'
+    assert core.update(db, t['id'], 'bot', status='in_progress')['status'] == 'in_progress'
+    with pytest.raises(core.TaskError, match='is a bot'):
+        core.update(db, t['id'], 'bot', approved_by='bot', approval_source='self')
+
+
+def test_created_at_is_validated(db):
+    with pytest.raises(core.TaskError, match='created_at'):
+        core.create(db, 'x', 'bot', 'direct_to_bot', 'bot', created_at='garbage')
+    result = core.bulk_import(db, [dict(title='y', owner_bot='bot', source='direct_to_bot', created_at='nope')], 'bot')
+    assert result['created'] == [] and 'created_at' in result['errors'][0]['error']
+    assert core.flags(db)['created_recently'] == []
+
+
+def test_exports_and_backups_are_private(db, tmp_path, monkeypatch):
+    core.create(db, 'x', 'bot', 'direct_to_bot', 'bot')
+    out = core.export(db, str(tmp_path / 'exports' / 'e.json'))
+    assert oct(os.stat(out['path']).st_mode & 0o777) == '0o600'
+    assert json.load(open(out['path']))['tasks'][0]['title'] == 'x'
+    assert not list((tmp_path / 'exports').glob('*.tmp'))
+    monkeypatch.setattr(server, 'BACKUP_DIR', str(tmp_path / 'backups'))
+    monkeypatch.setattr(server, 'BACKUP_KEEP', 1)
+    path = server.backup()
+    assert oct(os.stat(path).st_mode & 0o777) == '0o600'

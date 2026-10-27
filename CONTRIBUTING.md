@@ -49,10 +49,10 @@ review and merge after review and required checks; do not publish a release as
 part of an unrelated change. Report vulnerabilities privately using
 [SECURITY.md](SECURITY.md), rather than a public PR or issue.
 
-The [CI workflow](.github/workflows/ci.yml) runs on pushes to `main` and same-repository pull requests
-on self-hosted Linux X64 runners. Fork PRs are skipped to protect those runners.
-It uses the runner's `python3` (the package requires Python 3.11+). It installs the test extra and `shellcheck-py`, runs
-ShellCheck on `scripts/*.sh` and `ensure.sh`, compiles `cli.py`, `core.py`, and
-`server.py`, runs `python -m pytest -q tests`, and rejects legacy names and
+The [CI workflow](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests
+(including forks) on GitHub-hosted `ubuntu-latest` with Python 3.12 (the package requires 3.11+).
+It installs the test extra and `shellcheck-py`, runs
+ShellCheck on `scripts/*.sh` and `ensure.sh`, compiles `cli.py`, `core.py`,
+`server.py`, and `dashboard.py`, runs `python -m pytest -q tests`, and rejects legacy names and
 private workspace paths (with the documented migration exception). CI does
 not currently enforce a formatter or build a release package.

@@ -1,8 +1,8 @@
 name: PR auto-merge (green CI)
-# Sean's rule: if a PR passes CI, merge it. Calls the shared merge helper after
-# CI completes on a same-repo pull request; the helper re-checks reviews, holds
+# If a same-repo PR passes CI, merge it. Calls the shared merge helper after CI
+# completes on a same-repo pull request; the helper re-checks reviews, holds
 # (draft, requested review, unresolved threads, changes requested), and that every
-# check on the exact head is green before squash-merging. Self-hosted runner only.
+# check on the exact head is green before squash-merging. Fork PRs are never merged here.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -22,7 +22,7 @@ jobs:
       statuses: read
     uses: Oceanswave/github-workflows/.github/workflows/merge.yml@125b14d3312b525c8f5b42e9f1c7a9e172d1b23f # main
     with:
-      runs-on: '["self-hosted","Linux","X64"]'
+      runs-on: '["ubuntu-latest"]'
       head-branch: ${{ github.event.workflow_run.head_branch }}
       expected-head: ${{ github.event.workflow_run.head_sha }}
       required-checks: '[{"name":"test","appId":15368}]'

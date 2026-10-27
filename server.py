@@ -1,6 +1,5 @@
 """MCP server (streamable HTTP on 127.0.0.1, or stdio with --stdio) for Backlogr."""
 import sys, os, threading, time, datetime as dt, logging, hmac, json, glob, sqlite3
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -9,13 +8,16 @@ import dashboard
 from contextlib import closing
 import inspect
 
-__version__ = "1.9.0"
+__version__ = core.__version__
 
 PORT = int(os.environ.get("BACKLOGR_PORT", "8796"))
 HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_HOSTS", "127.0.0.1").split(",") if h.strip()]
 TOKEN = os.environ.get("BACKLOGR_TOKEN", "")
 BACKUP_DIR = os.environ.get("BACKLOGR_BACKUP_DIR", "")
-BACKUP_KEEP = int(os.environ.get("BACKLOGR_BACKUP_KEEP", "14"))
+BACKUP_KEEP = max(1, int(os.environ.get("BACKLOGR_BACKUP_KEEP", "14")))
+# Accept a nonempty Tailscale-User-Login header as dashboard auth. Only safe when every request arrives through
+# `tailscale serve`, which sets that header; anything that can reach the listener directly could forge it.
+TRUST_TAILSCALE = os.environ.get("BACKLOGR_TRUST_TAILSCALE_HEADERS", "").strip().lower() in ("1", "true", "yes")
 # Extra Host header names to accept (e.g. your reverse-proxy / tailnet DNS name), comma separated.
 EXTRA_HOSTS = [h.strip() for h in os.environ.get("BACKLOGR_ALLOWED_HOSTS", "").split(",") if h.strip()]
 _names = set(HOSTS) | {"127.0.0.1", "localhost"} | set(EXTRA_HOSTS)
@@ -39,7 +41,7 @@ def task_create(title: str, owner_bot: str, source: str, actor: str, done_means:
                 approved_by: Optional[str] = None, approval_source: Optional[str] = None,
                 evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None,
                 key: Optional[str] = None) -> dict:
-    """Create a task. key: a stable idempotency key (e.g. "forge:pr-12-review"); if a task already has it, that task is returned unchanged with existing=true, so retries never duplicate. The result has warnings when an open task has a very similar title: check it before carrying on. source: direct_to_bot | via_chukar | bot_initiated. status: todo|in_progress|waiting_on_sean|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_sean, one line saying exactly what the owner must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
+    """Create a task. key: a stable idempotency key (e.g. "forge:pr-12-review"); if a task already has it, that task is returned unchanged with existing=true, so retries never duplicate. The result has warnings when an open task has a very similar title: check it before carrying on. source: direct_to_bot | via_coordinator | bot_initiated. status: todo|in_progress|waiting_on_owner|blocked|done|declined. due: ISO 8601. done_means: one line saying what done looks like. ask: required with status waiting_on_owner, one line saying exactly what the owner must decide or do. approved_by/approval_source: the human approval (never a bot name); required before an approval_needed task can be in_progress or done. evidence/test_results: see task_update. actor: your bot name."""
     with closing(_c()) as c:
         return core.create(c, title=title, owner_bot=owner_bot, source=source, actor=actor,
                            done_means=done_means, due=due, status=status, approval_needed=approval_needed, note=note, ask=ask,
@@ -51,7 +53,7 @@ def task_update(id: str, actor: str, status: Optional[str] = None, due: Optional
                 approval_needed: Optional[bool] = None, ask: Optional[str] = None,
                 approved_by: Optional[str] = None, approval_source: Optional[str] = None,
                 evidence: Optional[str] = None, test_results: Optional[dict[str, str]] = None) -> dict:
-    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_sean requires ask (one line: exactly what the owner must decide or do). Record a human approval with approved_by (the human, never a bot) and approval_source (e.g. "owner in chat"); an approval_needed task cannot move to in_progress or done without one. Moving to done requires evidence (link, commit sha, path or command output summary), and test_results {test name: "pass"|"fail"} when done_means mentions tests. actor: your bot name."""
+    """Update a task's status/due/owner/approval_needed and/or append a note to its log. Moving to waiting_on_owner requires ask (one line: exactly what the owner must decide or do). Record a human approval with approved_by (the human, never a bot) and approval_source (e.g. "owner in chat"); an approval_needed task cannot move to in_progress or done without one. Moving to done requires evidence (link, commit sha, path or command output summary), and test_results {test name: "pass"|"fail"} when done_means mentions tests. actor: your bot name."""
     with closing(_c()) as c:
         return core.update(c, id, actor, status=status, due=due, owner_bot=owner_bot, note=note, approval_needed=approval_needed, ask=ask,
                            approved_by=approved_by, approval_source=approval_source, evidence=evidence, test_results=test_results)
@@ -79,7 +81,7 @@ def task_list(owner: Optional[str] = None, status: Optional[str] = None, overdue
 
 @mcp.tool()
 def task_flags(stale_hours: float = 24, created_within_hours: float = 24) -> dict:
-    """Check-in view: overdue, stale, blocked, waiting_on_sean, and tasks created in the last N hours."""
+    """Check-in view: overdue, stale, blocked, waiting_on_owner, open questions for owners, and tasks created in the last N hours."""
     with closing(_c()) as c:
         return core.flags(c, stale_hours=stale_hours, created_within_hours=created_within_hours)
 
@@ -90,10 +92,10 @@ def task_act(id: str, action: str, reason: Optional[str] = None, by: Optional[st
         return core.act(c, id, action, by=by, reason=reason)
 
 @mcp.tool()
-def task_sean() -> list:
-    """Owner queue: every waiting_on_sean task, oldest first, with its exact ask and age in hours."""
+def task_waiting() -> list:
+    """Owner queue: every waiting_on_owner task, oldest first, with its exact ask and age in hours."""
     with closing(_c()) as c:
-        return core.sean_queue(c)
+        return core.waiting_queue(c)
 
 @mcp.tool()
 def task_stale(hours: float = 2) -> dict:
@@ -124,8 +126,8 @@ def rule_get(id: str) -> dict:
 def rule_add(id: str, rule: str, title: str = '', test: str = '', evidence: str = '',
              source: str = '', testable: Optional[bool] = None, category: str = '',
              applies_to: str = '', playbook_id: Optional[str] = None,
-             actor: str = 'owner', replace: bool = False) -> dict:
-    """Add a rule; replace=true explicitly updates an existing ID. UNTESTED tests derive testable=false."""
+             actor: Optional[str] = None, replace: bool = False) -> dict:
+    """Add a rule; replace=true explicitly updates an existing ID. UNTESTED tests derive testable=false. actor defaults to BACKLOGR_OWNER."""
     with closing(_c()) as c:
         return core.rule_add(c, id=id, rule=rule, title=title, test=test, evidence=evidence,
                              source=source, testable=testable, category=category, applies_to=applies_to,
@@ -161,34 +163,27 @@ def rules_import(items: dict, actor: str) -> dict:
     with closing(_c()) as c:
         return core.rules_import(c, items=items, actor=actor)
 
-# ---- plain JSON API used by the `backlogr` CLI (same auth) ----
-API = {
-    "rule_list": lambda c, a: core.rule_list(c, **a),
-    "rule_get": lambda c, a: core.rule_get(c, **a),
-    "rule_add": lambda c, a: core.rule_add(c, **a),
-    "rule_untested": lambda c, a: core.rule_untested(c, **a),
-    "playbook_list": lambda c, a: core.playbook_list(c, **a),
-    "playbook_get": lambda c, a: core.playbook_get(c, **a),
-    "playbook_add": lambda c, a: core.playbook_add(c, **a),
-    "rules_import": lambda c, a: core.rules_import(c, **a),
+def export_data() -> dict:
+    """Every task with its log and links (the CLI's remote export)."""
+    with closing(_c()) as c:
+        return core.snapshot(c)
 
-    "create": lambda c, a: core.create(c, **a),
-    "update": lambda c, a: core.update(c, a.pop("id"), a.pop("actor"), **a),
-    "add_link": lambda c, a: core.add_link(c, a["id"], a["actor"], a["ref"], a.get("kind", "other")),
-    "get": lambda c, a: core.get(c, a["id"]),
-    "list": lambda c, a: core.list_tasks(c, **a),
-    "flags": lambda c, a: core.flags(c, **a),
-    "stale": lambda c, a: core.stale(c, **a),
-    "sean": lambda c, a: core.sean_queue(c),
-    "act": lambda c, a: core.act(c, a["id"], a["action"], by=a.get("by") or core.owner(), reason=a.get("reason")),
-    "import": lambda c, a: core.bulk_import(c, a["items"], a["actor"]),
-    "export_data": lambda c, a: {"exported_at": core.now(), "tasks": [core.get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]},
-}
-
-API_FIELDS = {op: set(inspect.signature(globals()[op if op.startswith(('rule_', 'playbook_', 'rules_')) else 'task_' + op]).parameters)
-              for op in API if op != "export_data"}
-API_FIELDS["export_data"] = set()
+# ---- plain JSON API used by the `backlogr` CLI (same auth): POST /api/<op> with the tool's arguments ----
+API = {"create": task_create, "update": task_update, "add_link": task_add_link, "get": task_get, "list": task_list,
+       "flags": task_flags, "stale": task_stale, "waiting": task_waiting, "act": task_act, "import": task_import,
+       "export_data": export_data, "rule_list": rule_list, "rule_get": rule_get, "rule_add": rule_add,
+       "rule_untested": rule_untested, "playbook_list": playbook_list, "playbook_get": playbook_get,
+       "playbook_add": playbook_add, "rules_import": rules_import,
+       "sean": task_waiting}  # pre-2.0 name of "waiting", kept for older CLI clients
+API_FIELDS = {op: set(inspect.signature(fn).parameters) for op, fn in API.items()}
 MAX_BODY = 1024 * 1024
+
+DASHBOARD_HEADERS = {
+    "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"}
+
+def _bearer_ok(header):
+    return bool(TOKEN) and hmac.compare_digest(header.encode("latin-1", "replace"), f"Bearer {TOKEN}".encode())
 
 def build_app():
     from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -207,9 +202,8 @@ def build_app():
             if invalid is not None:
                 return await invalid(scope, receive, send)
             headers = HTTPConnection(scope).headers
-            bearer = headers.get("authorization", "")
-            authorized = bool(TOKEN) and hmac.compare_digest(bearer.encode(), f"Bearer {TOKEN}".encode())
-            if not authorized and not headers.get("tailscale-user-login", "").strip():
+            authorized = _bearer_ok(headers.get("authorization", ""))
+            if not authorized and not (TRUST_TAILSCALE and headers.get("tailscale-user-login", "").strip()):
                 return await JSONResponse({"error": "unauthorized"}, status_code=401,
                                           headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
             if scope["method"] not in ("GET", "HEAD"):
@@ -220,10 +214,9 @@ def build_app():
             response = JSONResponse(data) if path.endswith(".json") else HTMLResponse(dashboard.render(data))
             if scope["method"] == "HEAD":
                 response.body = b""
-            response.headers["Cache-Control"] = "no-store"
+            response.headers.update(DASHBOARD_HEADERS)
             return await response(scope, receive, send)
-        hdr = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
-        if not TOKEN or not hmac.compare_digest(hdr.encode(), f"Bearer {TOKEN}".encode()):
+        if not _bearer_ok(HTTPConnection(scope).headers.get("authorization", "")):
             return await JSONResponse({"error": "unauthorized"}, status_code=401,
                                       headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
         if path.startswith("/api/"):
@@ -243,13 +236,14 @@ def build_app():
                 if not isinstance(args, dict): raise core.TaskError("request must be an object")
                 for field in args:
                     if field not in API_FIELDS[op]: raise core.TaskError(f"unknown field: {field}")
-                with closing(core.connect()) as c:
-                    r = API[op](c, args)
-                code = 200
+                r, code = API[op](**args), 200
             except core.TaskError as e:
                 r, code = {"error": str(e)}, 400
-            except (TypeError, KeyError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 r, code = {"error": f"bad request: {e}"}, 400
+            except sqlite3.Error as e:
+                logging.exception("api %s failed", op)
+                r, code = {"error": f"database error: {e}"}, 503
             return await JSONResponse(r, status_code=code)(scope, receive, send)
         return await inner(scope, receive, send)
     return app, inner
@@ -258,8 +252,11 @@ def backup():
     if not BACKUP_DIR: return None
     os.makedirs(BACKUP_DIR, exist_ok=True)
     out = os.path.join(BACKUP_DIR, f"backlogr-{dt.date.today().isoformat()}.db")
-    src = core.connect(); dst = sqlite3.connect(out + ".tmp")
-    src.backup(dst); dst.close(); src.close(); os.replace(out + ".tmp", out)
+    tmp = out + ".tmp"
+    os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
+    with closing(core.connect()) as src, closing(sqlite3.connect(tmp)) as dst:
+        src.backup(dst)
+    os.replace(tmp, out)
     for old in sorted(glob.glob(os.path.join(BACKUP_DIR, "backlogr-*.db")))[:-BACKUP_KEEP]:
         os.remove(old)
     return out

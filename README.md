@@ -49,6 +49,7 @@ See the [complete reference](docs/CONFIGURATION.md) for all environment variable
 | `BACKLOGR_HUMANS` | people whose `act done` attestation can satisfy completion gates | unset |
 | `BACKLOGR_BOTS` | bot names that can never be `approved_by` (DB owners/actors are included, except configured humans) | none |
 | `BACKLOGR_APPROVERS` | if set, the only names accepted as `approved_by` | unset |
+| `BACKLOGR_TZ`, `BACKLOGR_DASHBOARD_CATEGORIES`, `BACKLOGR_TRUST_TAILSCALE_HEADERS` | dashboard time zone, card grouping, Tailscale header auth | local zone / none / off |
 
 ## Install the MCP
 Server name `backlogr`, streamable HTTP at `$BACKLOGR_URL/mcp`, header `Authorization: Bearer <token>`. Keep the token in an env var or a mode-600 file; never commit it or paste it into chat.
@@ -86,19 +87,19 @@ ln -s ~/src/backlogr/skills/backlogr ~/.codex/skills/backlogr      # Codex
 Other agents: point them at `AGENTS.md`, or paste the rule above into their instructions.
 
 ## MCP tools
-task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_sean, created_recently), task_stale (hours), task_sean (waiting_on_sean queue with asks), task_import, task_act.
-Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_sean|blocked|done|declined), source (direct_to_bot|via_chukar|bot_initiated), approval_needed, ask (required when moving to waiting_on_sean), waiting_since, created_at, updated_at, updates[], links[].
+task_create, task_update (status/due/owner/approval_needed/note), task_add_link, task_get, task_list (owner, status or comma list, overdue, stale_hours, due_before, q, source, include_closed, limit, offset), task_flags (overdue, stale, blocked, waiting_on_owner, created_recently), task_stale (hours), task_waiting (waiting_on_owner queue with asks), task_import, task_act.
+Fields: id, title, done_means, owner_bot, due (ISO), status (todo|in_progress|waiting_on_owner|blocked|done|declined), source (direct_to_bot|via_coordinator|bot_initiated), approval_needed, ask (required when moving to waiting_on_owner), waiting_since, created_at, updated_at, updates[], links[].
 
 ## CLI (`backlogr`)
 Remote when `BACKLOGR_URL` is set (token from `BACKLOGR_TOKEN_FILE`), else the local DB (`BACKLOGR_DB`).
 ```
-backlogr new "Order sample tee" --owner Mint --source via_chukar --by Coordinator --done-means "tee arrives" --due 2026-10-30 --approval --key mint:sample-tee   # --key: retries return the same task
+backlogr new "Order sample tee" --owner Mint --source via_coordinator --by Coordinator --done-means "tee arrives" --due 2026-10-30 --approval --key mint:sample-tee   # --key: retries return the same task
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
 backlogr update T-abc123 --by Mint --link https://example.com/order --kind order
 backlogr done T-abc123 --by Mint --evidence "https://example.com/pr/12" --test unit=pass --test e2e=pass   # --evidence required; --test when done_means mentions tests
-backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_chukar] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all] [--limit 50] [--offset 0]
+backlogr list [--owner Mint] [--status todo,in_progress] [--q PR] [--source via_coordinator] [--due-before 2026-11-01] [--overdue] [--stale-hours 24] [--all] [--limit 50] [--offset 0]
 backlogr flags [--stale 24] [--recent 24]
-backlogr sean                       # waiting_on_sean queue: exact ask + age, oldest first
+backlogr waiting                    # waiting_on_owner queue: exact ask + age, oldest first
 backlogr approve T-id --by Forge --approver Operator --source "Operator in chat 11:17"   # human approval record
 backlogr stale [--hours 2]          # in_progress with no note in N hours, by owner
 backlogr get T-abc123 [--short]      backlogr import file.json --by Coordinator      backlogr export [--path P]
@@ -196,15 +197,18 @@ The same authenticated HTTP API and MCP expose `rule_list`, `rule_get`,
 ## Live dashboard
 
 Open `/dashboard` on your Backlogr server (or `/backlogr/dashboard` under a
-`/backlogr` reverse-proxy prefix) for the live Bot Team Dashboard. The page reads
+`/backlogr` reverse-proxy prefix) for the live dashboard. The page reads
 SQLite on every request and refreshes every 60 seconds. It shows task counts,
-assignees, decisions waiting on Sean, category cards, the latest 40 finished
+assignees, decisions waiting on the owner (`BACKLOGR_OWNER`), task cards (grouped by
+optional `BACKLOGR_DASHBOARD_CATEGORIES`), the latest 40 finished
 tasks, up to 80 timeline events from the last 48 hours, and rules/playbooks.
 `/dashboard.json` serves the same computed model for other read-only clients.
 
-Both routes accept GET and HEAD only and require either the existing
-`Authorization: Bearer …` API credential or a nonempty `Tailscale-User-Login`
-header supplied by `tailscale serve`. The server must remain reachable only
-through localhost or the tailnet; any other proxy must strip client-supplied
-Tailscale identity headers. The existing `BACKLOGR_ALLOWED_HOSTS` configuration
-also applies. The dashboard has no task action controls or external assets.
+Both routes accept GET and HEAD only and require the `Authorization: Bearer …`
+API credential. Behind `tailscale serve` you can set
+`BACKLOGR_TRUST_TAILSCALE_HEADERS=1` to also accept the `Tailscale-User-Login`
+identity header it adds; enable that only when the listener is reachable solely
+through `tailscale serve`, because a direct client could forge the header. The
+existing `BACKLOGR_ALLOWED_HOSTS` configuration also applies. The dashboard sends
+a strict Content-Security-Policy and has no scripts, task action controls, or
+external assets. Times use `BACKLOGR_TZ` (default: the server's local zone).

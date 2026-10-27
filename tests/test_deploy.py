@@ -72,3 +72,14 @@ def test_refuses_modified_tracked_files(setup):
     r = run(setup, "--ref", "v1.1.0")
     assert r.returncode == 4 and "tracked files modified" in r.stdout
     assert not (setup["home"] / "backups").exists()
+
+def test_quoted_env_db_and_missing_db(setup):
+    db = setup["home"] / "data" / "backlogr.db"
+    (setup["home"] / ".env").write_text(f'BACKLOGR_PORT=9999\nBACKLOGR_DB="{db}"\n')
+    r = run(setup, "--ref", "v1.1.0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"backup: {setup['home']}/backups/" in r.stdout
+    sh("git", "checkout", "-q", "v1.0.0", cwd=setup["home"])
+    (setup["home"] / ".env").write_text(f'BACKLOGR_DB="{setup["home"]}/data/missing.db"\n')
+    r = run(setup, "--ref", "v1.1.0")
+    assert r.returncode == 5 and "DB not found" in r.stdout and head(setup) == "v1"

@@ -105,3 +105,45 @@ task JSON exports do not include rules/playbooks. See
 [Rules and Playbooks](docs/RULES_PLAYBOOKS.md) for bulk import and recovery.
 Downgrading code leaves the additive tables in place; restoring the pre-upgrade
 backup is the clean rollback, and loses writes made after that backup.
+
+## v2.0.0
+
+Back up the database first (`scripts/deploy.sh` does this for you). Then restart.
+
+**Data (schema version 3).** On the first connection, stored values are rewritten
+once: status `waiting_on_sean` becomes `waiting_on_owner`, and source `via_chukar`
+becomes `via_coordinator`. The append-only update log is not rewritten, so older
+notes still show the old words.
+
+**Renamed interfaces.** The old names still work as *input* everywhere: core, CLI,
+MCP and API all accept them. Results always use the new names, so update any
+client code that compares status or source strings.
+
+| Before | After |
+|---|---|
+| status `waiting_on_sean` | `waiting_on_owner` |
+| source `via_chukar` | `via_coordinator` |
+| `task_flags` key `waiting_on_sean` | `waiting_on_owner` |
+| MCP `task_sean` | `task_waiting` (the old tool is removed; MCP clients rediscover tools) |
+| API op `sean` | `waiting` (`sean` is kept as an alias for older CLIs) |
+| CLI `backlogr sean` | `backlogr waiting` (`sean` is kept as an alias) |
+| `core.sean_queue` | `core.waiting_queue` |
+
+**Dashboard.** Bot names, colors and glyphs now come from your data instead of a
+built-in roster. Card categories are off unless you set
+`BACKLOGR_DASHBOARD_CATEGORIES`. Times use `BACKLOGR_TZ`, or the server's local zone.
+
+**Tailscale header auth is now opt-in.** If you open the dashboard through
+`tailscale serve` without a bearer token, add `BACKLOGR_TRUST_TAILSCALE_HEADERS=1`
+to `.env`. Do this only if the listener binds loopback and is reached solely
+through `tailscale serve`.
+
+**Approvals.** `BACKLOGR_OWNER` is now always a human. People who use `act`
+no longer become "bots" just by acting. This fixes a lockout where an owner who
+had clicked `later` or `question` could no longer approve tasks.
+
+**Rollback.** Older code still runs on a v3 database, but it does not recognise
+the new status and source values. To roll back cleanly, restore the pre-deploy
+backup.
+
+Update installed agent skills from `skills/backlogr/SKILL.md`.

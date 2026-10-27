@@ -16,7 +16,8 @@ BUNDLE=""; REF=""; DRY=0
 while [ $# -gt 0 ]; do case "$1" in
   --bundle) BUNDLE="$2"; shift 2;; --ref) REF="$2"; shift 2;; --dry-run|-n) DRY=1; shift;;
   -h|--help) sed -n 2,11p "$0"; exit 0;; *) echo "unknown arg $1"; exit 2;; esac; done
-envval(){ [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; }
+# Last KEY=value in .env, with surrounding quotes stripped as systemd's EnvironmentFile does.
+envval(){ [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/' || true; }
 DB="${BACKLOGR_DB:-$(envval BACKLOGR_DB)}"; DB=${DB:-$DIR/data/backlogr.db}
 PORT="${BACKLOGR_PORT:-$(envval BACKLOGR_PORT)}"; PORT=${PORT:-8796}
 PREV=$(git rev-parse HEAD); TS=$(date +%Y%m%d-%H%M%S)
@@ -27,6 +28,7 @@ else git fetch -q --tags origin || { echo "origin unreachable; use --bundle"; ex
 [ -z "$REF" ] && REF=$(git tag -l 'v*' --sort=-v:refname | head -1); [ -z "$REF" ] && REF=origin/main
 NEW=$(git rev-parse "$REF^{commit}"); echo "target: $REF ($NEW)"
 B="$DIR/backups/pre-deploy-$TS.db"
+[ -f "$DB" ] || { echo "DB not found at $DB; set BACKLOGR_DB"; exit 5; }
 if [ "$DRY" = 1 ]; then echo "DRY: backup $DB -> $B"; else
 mkdir -p "$DIR/backups"
 python3 -c "import sqlite3,sys;s=sqlite3.connect(sys.argv[1]);d=sqlite3.connect(sys.argv[2]);s.backup(d);d.close();s.close()" "$DB" "$B"; chmod 600 "$B"; echo "backup: $B"; fi

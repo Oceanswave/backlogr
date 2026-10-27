@@ -87,7 +87,7 @@ def test_migration(tmp_path):
             assert existing['title'] == 'Existing'
             assert existing['updates'][0]['note'] == 'created'
             assert existing['links'][0]['ref'] == 'example evidence'
-            assert c.execute('PRAGMA user_version').fetchone()[0] == 2
+            assert c.execute('PRAGMA user_version').fetchone()[0] == core.SCHEMA_VERSION
             assert core.rules_import(c, seed(), 'Agent')['created'] in (0, 3)
             assert len(core.rule_list(c)) == 2
 

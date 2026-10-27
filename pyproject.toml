@@ -4,8 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "backlogr"
-version = "1.9.0"
+dynamic = ["version"]
 description = "Backlogr: system of record for a team of AI agents' work (MCP server + CLI)"
+readme = "README.md"
+authors = [{name = "Sean McLellan"}]
+keywords = ["mcp", "ai-agents", "task-tracking", "sqlite", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX",
+    "Topic :: Software Development :: Bug Tracking",
+]
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -18,5 +26,12 @@ test = ["pytest==9.1.1"]
 backlogr = "cli:main"
 backlogr-server = "server:main_entry"
 
+[project.urls]
+Repository = "https://github.com/Oceanswave/backlogr"
+Changelog = "https://github.com/Oceanswave/backlogr/blob/main/CHANGELOG.md"
+
 [tool.setuptools]
 py-modules = ["cli", "core", "server", "dashboard"]
+
+[tool.setuptools.dynamic]
+version = {attr = "core.__version__"}

@@ -11,7 +11,7 @@ Do not open a public issue or PR with exploit details before coordination.
 If private reporting is unavailable, the repository administrators must enable
 it before this reporting route can accept submissions. Do not substitute a
 public issue containing vulnerability details. This policy does not promise a
-response SLA or a supported-version window; include whether 1.8.0 is affected.
+response SLA or a supported-version window; include the affected versions.
 
 ## Threat model
 
@@ -28,7 +28,19 @@ and process environment. Local CLI and stdio MCP use filesystem/process access
 as their trust boundary; stdio does not require the HTTP bearer token. Trusted
 local `import --restore` deliberately bypasses creation gates.
 
-`/healthz` is unauthenticated.
+`/healthz` is unauthenticated. `/dashboard` and `/dashboard.json` are read-only
+and require the bearer token, unless `BACKLOGR_TRUST_TAILSCALE_HEADERS` is set,
+in which case a nonempty `Tailscale-User-Login` header is also accepted. Enable it
+only when the listener is reachable solely through `tailscale serve`, which sets
+that header; any client that can connect directly could forge it.
+
+Because names are caller-supplied, the approval gate is a workflow guard, not an
+access control: with `BACKLOGR_APPROVERS` unset, any token holder can record any
+non-bot name as `approved_by`. Set `BACKLOGR_APPROVERS` to narrow it.
+
+Exports and nightly backups are written mode 600. The remote CLI does not follow
+HTTP redirects (urllib would forward the bearer token to the new host) and warns
+when `BACKLOGR_URL` uses plain HTTP to a non-loopback host.
 
 `BACKLOGR_HOSTS` controls listener addresses. `BACKLOGR_ALLOWED_HOSTS` adds Host
 names to the MCP transport's DNS rebinding protection; it is not an IP access

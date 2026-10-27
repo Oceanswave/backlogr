@@ -4,6 +4,47 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+## 2.0.0
+
+Prepares Backlogr for public release. See [MIGRATION.md](MIGRATION.md#v200) for upgrade steps.
+
+**Breaking**
+
+- Renamed deployment-specific identifiers. `waiting_on_sean` is now `waiting_on_owner`, `via_chukar` is now `via_coordinator`, `task_sean` is now `task_waiting`, and `backlogr sean` is now `backlogr waiting`.
+  - The old names are still accepted as input.
+  - Schema version 3 rewrites stored values once.
+  - The API op `sean` and the CLI command `sean` remain as aliases.
+- The dashboard is generic:
+  - Owners come from the data. Headings use `BACKLOGR_OWNER`.
+  - Categories come from the optional `BACKLOGR_DASHBOARD_CATEGORIES` JSON file.
+  - The time zone comes from `BACKLOGR_TZ`.
+- `Tailscale-User-Login` no longer authorizes the dashboard unless `BACKLOGR_TRUST_TAILSCALE_HEADERS` is set.
+
+**Fixes**
+
+- People who used `act` were counted as bots, so the owner could no longer approve tasks. `BACKLOGR_OWNER` is now always treated as a human.
+- `created_at` is validated. Previously, one malformed import broke `flags` for every caller.
+- A non-UTF-8 `Authorization` header now returns 401 instead of a 500.
+- SQLite errors now return a JSON 503.
+- Exports and backups are written mode 600 through unique temp files. Exports read a single consistent transaction.
+- Setting `BACKLOGR_BACKUP_KEEP=0` no longer keeps every backup.
+- `backlogr update --link` applies field changes first, so a rejected update no longer leaves a stray link.
+- `scripts/deploy.sh` strips quotes from `.env` values and refuses to run when the DB file is missing. Previously it reported an empty backup as a success.
+- Dashboard: `trunc` no longer drops a character from text that has no spaces.
+
+**Security**
+
+- The dashboard now sends Content-Security-Policy, `nosniff` and `no-referrer` headers.
+- The remote CLI refuses HTTP redirects. Without this, urllib would forward the bearer token to the redirect target.
+- The remote CLI warns when it sends the token over plain HTTP to a non-loopback host.
+
+**Internals**
+
+- The version is defined once, in `core.__version__`.
+- The HTTP API dispatches directly to the MCP tool functions, replacing a duplicate lambda table and reflection over `globals()`.
+- Removed the `sys.path` hacks.
+- CI runs on GitHub-hosted runners.
+
 ## 1.9.0
 
 - Add a live, read-only `/dashboard` and `/dashboard.json`, reading tasks, rules, playbooks, and the last 48 hours of task history directly from SQLite on each request.

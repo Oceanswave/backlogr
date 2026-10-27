@@ -10,22 +10,22 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
-    # Self-hosted runners: never run code from forks.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64]
+    # GitHub-hosted only: this is a public repository, so pull requests from forks must never reach a self-hosted runner.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Set up venv
-        run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q -e '.[test]' shellcheck-py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -q -e '.[test]' shellcheck-py
       - name: Shellcheck
-        run: '"$RUNNER_TEMP/venv/bin/shellcheck" scripts/*.sh ensure.sh'
+        run: shellcheck scripts/*.sh ensure.sh
       - name: Compile
-        run: '"$RUNNER_TEMP/venv/bin/python" -m py_compile cli.py core.py server.py'
+        run: python -m py_compile cli.py core.py server.py dashboard.py
       - name: Tests
-        run: '"$RUNNER_TEMP/venv/bin/python" -m pytest -q tests'
+        run: python -m pytest -q tests
       - name: No legacy names
         run: |
           if grep -rnE 'TASKS?_(DB|PORT|HOSTS|TOKEN|URL|EXPORT|BACKUP)|task-manager|Task Manager|bot-team-tasks|/workspace/|/cursor/stores' --include='*.py' --include='*.sh' --include='*.service' --include='*.toml' --include='*.md' --include='*.example' --exclude=MIGRATION.md --exclude-dir=.github . ; then echo "legacy name found"; exit 1; fi

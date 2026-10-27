@@ -1,4 +1,4 @@
-# Architecture (1.8.0)
+# Architecture (2.0.0)
 
 ## Components and request flow
 
@@ -11,7 +11,7 @@ and an authenticated list request. `--version` prints the code version.
 
 `server.py` exposes the same core operations through FastMCP tools:
 `task_create`, `task_update`, `task_add_link`, `task_get`, `task_list`,
-`task_flags`, `task_act`, `task_sean`, `task_stale`, and `task_import`.
+`task_flags`, `task_act`, `task_waiting`, `task_stale`, and `task_import`.
 Each tool opens and closes a SQLite connection. HTTP mode runs Uvicorn listeners
 on `BACKLOGR_HOSTS`/`BACKLOGR_PORT`, serving stateless streamable HTTP at `/mcp`,
 the CLI JSON API, `/healthz`. HTTP mode requires a bearer
@@ -29,8 +29,9 @@ a SQLite backup once that day. See [configuration](CONFIGURATION.md) and
 
 `core.connect()` creates parent directories, opens SQLite with WAL, a 15-second
 busy timeout, and foreign keys enabled, creates missing schema objects, and adds
-missing task columns. `PRAGMA user_version` advances from 0 or 1 to schema version 2
-after additive setup; this is distinct from application version 1.8.0. `doctor` checks it.
+missing task columns. `PRAGMA user_version` advances to schema version 3 after additive
+setup; version 3 also rewrites the pre-2.0 stored values `waiting_on_sean` and `via_chukar`
+to `waiting_on_owner` and `via_coordinator`. This is distinct from application version 2.0.0. `doctor` checks it.
 
 | Table | Contents |
 |---|---|
@@ -47,8 +48,8 @@ Additive task columns are `ask`, `waiting_since`, `approved_by`, `approved_at`,
 index enforces non-null idempotency keys. Repeated creation with the same key
 returns the existing task. Similar open titles produce warnings.
 
-Statuses are `todo`, `in_progress`, `waiting_on_sean`, `blocked`, `done`, and
-`declined`; sources are `direct_to_bot`, `via_chukar`, and `bot_initiated`.
+Statuses are `todo`, `in_progress`, `waiting_on_owner`, `blocked`, `done`, and
+`declined`; sources are `direct_to_bot`, `via_coordinator`, and `bot_initiated`.
 Legacy names remain part of the public contract regardless of the configured
 owner name. Waiting requires an exact ask; approval-needed work needs a recorded
 human approval before starting or finishing; done needs evidence and per-test

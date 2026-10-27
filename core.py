@@ -3,17 +3,23 @@ import difflib, json, os, re, sqlite3, uuid, datetime as dt
 from pathlib import Path
 from contextlib import contextmanager
 
-__version__ = "1.9.0"
-SCHEMA_VERSION = 2
+__version__ = "2.0.0"
+SCHEMA_VERSION = 3
 
 def owner():
     return os.environ.get("BACKLOGR_OWNER", "owner")
 
 DB_PATH = os.environ.get("BACKLOGR_DB", os.path.expanduser("~/backlogr/data/backlogr.db"))
 EXPORT_PATH = os.environ.get("BACKLOGR_EXPORT", os.path.expanduser("~/backlogr/exports/backlogr-export.json"))
-STATUSES = ("todo", "in_progress", "waiting_on_sean", "blocked", "done", "declined")
-SOURCES = ("direct_to_bot", "via_chukar", "bot_initiated")
-OPEN = ("todo", "in_progress", "waiting_on_sean", "blocked")
+STATUSES = ("todo", "in_progress", "waiting_on_owner", "blocked", "done", "declined")
+SOURCES = ("direct_to_bot", "via_coordinator", "bot_initiated")
+OPEN = ("todo", "in_progress", "waiting_on_owner", "blocked")
+# Pre-2.0 status/source names: still accepted as input, rewritten in stored rows by connect().
+LEGACY = {"waiting_on_sean": "waiting_on_owner", "via_chukar": "via_coordinator"}
+
+def canon(value):
+    """Map a legacy status or source name to its current name; other values pass through."""
+    return LEGACY.get(value, value)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS playbooks(
@@ -53,8 +59,8 @@ CREATE INDEX IF NOT EXISTS t_owner ON tasks(owner_bot);
 # Columns added after 1.0.0. connect() adds any that are missing (ALTER TABLE ADD COLUMN), so
 # restarting the server migrates an old DB in place. Never remove or rename a column here.
 ADDED_COLUMNS = [
-    ("ask", "TEXT"),            # exact one-line ask for the owner while waiting_on_sean
-    ("waiting_since", "TEXT"),  # when the row last entered waiting_on_sean
+    ("ask", "TEXT"),            # exact one-line ask for the owner while waiting_on_owner
+    ("waiting_since", "TEXT"),  # when the row last entered waiting_on_owner
     ("approved_by", "TEXT"),    # the human who approved (never a bot)
     ("approved_at", "TEXT"),    # when they approved
     ("approval_source", "TEXT"),  # where, e.g. "Operator in chat"
@@ -74,6 +80,10 @@ def _migrate(c):
             except sqlite3.OperationalError as e:
                 if "duplicate column" not in str(e): raise
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS t_key ON tasks(key) WHERE key IS NOT NULL")
+    if c.execute("PRAGMA user_version").fetchone()[0] < 3:
+        for old, new in LEGACY.items():
+            c.execute("UPDATE tasks SET status=? WHERE status=?", (new, old))
+            c.execute("UPDATE tasks SET source=? WHERE source=?", (new, old))
 
 def now():
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -104,7 +114,8 @@ def connect(path=None):
 class TaskError(ValueError):
     pass
 
-def _check(status=None, source=None, due=None):
+def _check(status=None, source=None, due=None, created_at=None):
+    """Validate already-canonical values (see canon)."""
     if status is not None and status not in STATUSES:
         raise TaskError(f"status must be one of {STATUSES}")
     if source is not None and source not in SOURCES:
@@ -112,6 +123,9 @@ def _check(status=None, source=None, due=None):
     if due:
         try: _parse(due)
         except Exception: raise TaskError("due must be ISO 8601, e.g. 2026-10-25 or 2026-10-25T17:00-04:00")
+    if created_at is not None:
+        try: _parse(created_at)
+        except Exception: raise TaskError("created_at must be an ISO 8601 date-time")
 
 def _new_id(c):
     while True:
@@ -121,14 +135,14 @@ def _new_id(c):
 
 def _need_ask(ask):
     if not (ask or "").strip():
-        raise TaskError(f"ask is required when status is waiting_on_sean: one line saying exactly what {owner()} must decide or do")
+        raise TaskError(f"ask is required when status is waiting_on_owner: one line saying exactly what {owner()} must decide or do")
 
 def _bots(c, *extra):
-    """Names that can never approve: BACKLOGR_BOTS, every owner and actor seen in the DB, plus extra (actor, owner),
-    minus BACKLOGR_HUMANS (people who may act on tasks themselves without becoming 'bots')."""
+    """Names that can never approve: BACKLOGR_BOTS, every owner and non-act actor seen in the DB, plus extra
+    (actor, owner), minus the humans (see _humans). Acts are taken by people, so their actors are not bots."""
     names = {x.strip().lower() for x in os.environ.get("BACKLOGR_BOTS", "").split(",")}
     names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT owner_bot FROM tasks")}
-    names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT actor FROM updates")}
+    names |= {(r[0] or "").strip().lower() for r in c.execute("SELECT DISTINCT actor FROM updates WHERE note NOT LIKE 'act %'")}
     names |= {(x or "").strip().lower() for x in extra}
     return names - {""} - _humans()
 
@@ -136,7 +150,8 @@ def _last_seq(c, tid):
     return c.execute("SELECT MAX(seq) FROM updates WHERE task_id=?", (tid,)).fetchone()[0]
 
 def _humans():
-    return {x.strip().lower() for x in os.environ.get("BACKLOGR_HUMANS", "").split(",") if x.strip()}
+    """BACKLOGR_HUMANS plus BACKLOGR_OWNER: people who may act on tasks themselves without becoming 'bots'."""
+    return {x.strip().lower() for x in os.environ.get("BACKLOGR_HUMANS", "").split(",") + [owner()] if x.strip()}
 
 def _check_approver(c, approved_by, *bots):
     who = (approved_by or "").strip()
@@ -200,8 +215,9 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
     The result carries `warnings` when open tasks have a title more than SIMILAR alike."""
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
-    _check(status, source, due)
-    if status == "waiting_on_sean": _need_ask(ask)
+    status, source = canon(status), canon(source)
+    _check(status, source, due, created_at)
+    if status == "waiting_on_owner": _need_ask(ask)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
     ts = created_at or now(); key = (key or "").strip() or None
     c.execute("BEGIN IMMEDIATE")
@@ -218,7 +234,7 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
         tid = id or _new_id(c)
         row = dict(id=tid, title=title, done_means=done_means or "", owner_bot=owner_bot, due=due, status=status,
                    source=source, approval_needed=int(bool(approval_needed)), created_at=ts, updated_at=ts,
-                   ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_sean" else None,
+                   ask=(ask or "").strip() or None, waiting_since=ts if status == "waiting_on_owner" else None,
                    approved_by=approved_by, approved_at=(approved_at or ts) if approved_by else None,
                    approval_source=approval_source if approved_by else None,
                    evidence=evidence, test_results=json.dumps(tests) if tests else None, key=key)
@@ -243,6 +259,7 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
            approval_needed=None, title=None, done_means=None, ask=None,
            approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None, _attest=False, _extra=None, _expect=None):
     if not actor: raise TaskError("actor is required")
+    status = canon(status)
     _check(status, None, due)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
     # validate and write under one write lock so concurrent updates cannot slip past the gates
@@ -254,7 +271,7 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
         if _expect is not None and _last_seq(c, tid) != _expect:
             raise TaskError("task changed since it was read; retry")
         ask = (ask or "").strip() or None
-        entering_wait = status == "waiting_on_sean" and cur["status"] != "waiting_on_sean"
+        entering_wait = status == "waiting_on_owner" and cur["status"] != "waiting_on_owner"
         if entering_wait: _need_ask(ask)
         changes, parts = {}, []
         owners = (actor, cur["owner_bot"], owner_bot)
@@ -361,13 +378,13 @@ def list_tasks(c, owner=None, status=None, overdue=False, stale_hours=None, incl
     if owner: sql += " AND lower(owner_bot)=lower(?)"; a.append(owner)
     if status:
         sts = [x.strip() for x in status.split(",")] if isinstance(status, str) else list(status)
-        sts = [x for x in sts if x]
+        sts = [canon(x) for x in sts if x]
         for x in sts: _check(status=x)
         sql += f" AND status IN ({','.join('?'*len(sts))})"; a += sts
     elif not include_closed:
         sql += f" AND status IN ({','.join('?'*len(OPEN))})"; a += list(OPEN)
     if source:
-        _check(source=source); sql += " AND source=?"; a.append(source)
+        source = canon(source); _check(source=source); sql += " AND source=?"; a.append(source)
     sql += " ORDER BY COALESCE(due,'9999'), updated_at, id"
     if not (q or due_before or overdue or stale_hours is not None):
         return [_row(r) for r in c.execute(sql + " LIMIT ? OFFSET ?", (*a, -1 if limit is None else limit, offset))]
@@ -395,11 +412,11 @@ def short(t):
     if t.get("due"): s += f"  (due {t['due']})"
     return s
 
-def sean_queue(c, ref=None):
+def waiting_queue(c, ref=None):
     """Everything waiting on the owner, oldest first, each with its exact ask and age in hours."""
     ref = ref or dt.datetime.now().astimezone()
     out = []
-    for r in c.execute("SELECT * FROM tasks WHERE status='waiting_on_sean'"):
+    for r in c.execute("SELECT * FROM tasks WHERE status='waiting_on_owner'"):
         t = _row(r); since = t.get("waiting_since") or t["updated_at"]
         out.append(dict(id=t["id"], title=t["title"], owner_bot=t["owner_bot"], ask=t.get("ask") or None,
                         since=since, age_hours=round((ref - _parse(since)).total_seconds() / 3600, 1), due=t["due"]))
@@ -430,7 +447,7 @@ def flags(c, stale_hours=24, created_within_hours=24, ref=None):
         "overdue": list_tasks(c, overdue=True, ref=ref),
         "stale": list_tasks(c, stale_hours=stale_hours, ref=ref),
         "blocked": list_tasks(c, status="blocked", ref=ref),
-        "waiting_on_sean": list_tasks(c, status="waiting_on_sean", ref=ref),
+        "waiting_on_owner": list_tasks(c, status="waiting_on_owner", ref=ref),
         "created_recently": [t for t in allt if _parse(t["created_at"]) >= lim],
         "questions_for_owner": [t for t in allt if t.get("open_question") and t["status"] in OPEN],
     }
@@ -452,6 +469,8 @@ def bulk_import(c, items, actor, *, restore=False):
                 created.append(create(c, actor=actor, **it)["id"])
                 continue
             # Trusted local restore only: preserve fields and append-only history verbatim.
+            for field in ("status", "source"):
+                if field in it: it[field] = canon(it[field])
             _check(it.get("status"), it.get("source"), it.get("due"))
             row = {k: v for k, v in it.items() if k in columns}
             if isinstance(row.get("test_results"), dict): row["test_results"] = json.dumps(row["test_results"])
@@ -470,13 +489,29 @@ def bulk_import(c, items, actor, *, restore=False):
             errors.append({"index": i, "title": item.get("title") if isinstance(item, dict) else None, "error": str(e)})
     return {"created": created, "skipped": skipped, "errors": errors}
 
+def snapshot(c):
+    """Every task with its log and links, read in one transaction."""
+    own_transaction = not c.in_transaction
+    if own_transaction: c.execute("BEGIN")
+    try:
+        return {"exported_at": now(), "tasks": [get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()]}
+    finally:
+        if own_transaction: c.execute("COMMIT")
+
+def write_private(path, write):
+    """Atomically write a mode-600 file via a unique temp file next to it; write(f) fills it."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    tmp = f"{path}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f: write(f)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True); raise
+
 def export(c, path=None):
     path = path or EXPORT_PATH
-    data = {"exported_at": now(), "tasks": [get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at")]}
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f: json.dump(data, f, indent=1)
-    os.replace(tmp, path)
+    data = snapshot(c)
+    write_private(path, lambda f: json.dump(data, f, indent=1))
     return {"path": path, "count": len(data["tasks"])}
 
 # ---- act: one-call human actions (dashboard buttons) ----
@@ -587,7 +622,8 @@ def rule_untested(c):
 
 
 def rule_add(c, id, rule, title='', test='', evidence='', source='', testable=None,
-             category='', applies_to='', playbook_id=None, actor='owner', replace=False):
+             category='', applies_to='', playbook_id=None, actor=None, replace=False):
+    actor = owner() if actor is None else actor
     fields = dict(id=id, title=title, rule=rule, test=test, evidence=evidence, source=source,
                   category=category, applies_to=applies_to)
     for field, value in fields.items(): _text(value, field, field in ('id', 'rule'))

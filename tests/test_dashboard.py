@@ -1,6 +1,8 @@
 from contextlib import closing
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
+from zoneinfo import ZoneInfo
+import json
 
 import pytest
 from starlette.testclient import TestClient
@@ -10,8 +12,14 @@ import dashboard
 import server
 
 
+@pytest.fixture(autouse=True)
+def eastern(monkeypatch):
+    monkeypatch.setattr(dashboard, 'TZ', ZoneInfo('America/New_York'))
+
+
 @pytest.fixture
 def db(tmp_path, monkeypatch):
+    monkeypatch.setenv('BACKLOGR_OWNER', 'Operator')
     monkeypatch.setattr(core, 'DB_PATH', str(tmp_path / 'dashboard.db'))
     with closing(core.connect()) as c:
         yield c
@@ -28,7 +36,7 @@ def client(db, monkeypatch):
 
 def make(c, title='Work', status='todo', **kw):
     return core.create(c, title, kw.pop('owner_bot', 'Forge'), 'direct_to_bot', 'Forge',
-                       status=status, ask='Which option?' if status == 'waiting_on_sean' else None,
+                       status=status, ask='Which option?' if status == 'waiting_on_owner' else None,
                        evidence='verified' if status == 'done' else None, **kw)
 
 
@@ -38,7 +46,7 @@ def test_counts_and_freshness(db, client):
     model = client.get('/dashboard.json').json()
     tasks = core.list_tasks(db, include_closed=True)
     assert model['TOTAL'] == len(tasks)
-    assert len(model['WAITING']) == len(core.list_tasks(db, status='waiting_on_sean'))
+    assert len(model['WAITING']) == len(core.list_tasks(db, status='waiting_on_owner'))
     assert len(model['PROGRESS']) == len(core.list_tasks(db, status='blocked,in_progress,todo'))
     assert len(model['DONE']) + model['OLDER_DONE'] == len(core.list_tasks(db, status='done'))
     assert model['DECLINED'] == len(core.list_tasks(db, status='declined'))
@@ -53,6 +61,7 @@ def test_counts_and_freshness(db, client):
 @pytest.mark.parametrize('path', ['/dashboard', '/dashboard.json'])
 def test_auth_methods_and_hosts(db, monkeypatch, path):
     monkeypatch.setattr(server, 'TOKEN', 'dashboard-test-token')
+    monkeypatch.setattr(server, 'TRUST_TAILSCALE', True)
     app, _ = server.build_app()
     with closing(TestClient(app, base_url='http://localhost')) as client:
         assert client.get(path).status_code == 401
@@ -75,6 +84,21 @@ def test_auth_methods_and_hosts(db, monkeypatch, path):
         assert client.get(path, headers={'Tailscale-User-Login': 'operator@example.com'}).status_code == 200
 
 
+@pytest.mark.parametrize('path', ['/dashboard', '/dashboard.json'])
+def test_tailscale_header_ignored_unless_trusted(db, monkeypatch, path):
+    monkeypatch.setattr(server, 'TOKEN', 'dashboard-test-token')
+    monkeypatch.setattr(server, 'TRUST_TAILSCALE', False)
+    app, _ = server.build_app()
+    with closing(TestClient(app, base_url='http://localhost')) as client:
+        assert client.get(path, headers={'Tailscale-User-Login': 'operator@example.com'}).status_code == 401
+        r = client.get(path, headers={'Authorization': 'Bearer dashboard-test-token'})
+        assert r.status_code == 200
+        assert "frame-ancestors 'none'" in r.headers['content-security-policy']
+        assert r.headers['x-content-type-options'] == 'nosniff'
+        assert client.get(path, headers={'Authorization': b'Bearer \xff'}).status_code == 401
+        assert client.post('/api/list', headers={'Authorization': b'Bearer \xff'}, json={}).status_code == 401
+
+
 class Tags(HTMLParser):
     def __init__(self, html):
         super().__init__()
@@ -86,7 +110,7 @@ class Tags(HTMLParser):
 
 
 def test_html_read_only_and_escaping(db, client):
-    t = make(db, '<script>alert("x")</script>', status='waiting_on_sean',
+    t = make(db, '<script>alert("x")</script>', status='waiting_on_owner',
              note='<img src=x onerror=alert(1)>', due='2026-10-27', owner_bot='Mint')
     core.add_link(db, t['id'], 'Forge', 'https://example.com/?q="<script>')
     core.add_link(db, t['id'], 'Forge', 'https://example.com/backlogr/act?token=old')
@@ -105,35 +129,43 @@ def test_html_read_only_and_escaping(db, client):
             assert attrs['target'] == '_blank' and attrs['rel'] == 'noopener'
             assert attrs['href'].startswith('https://') and '/act' not in attrs['href']
         assert tag not in ('script', 'link')
-    labels = ['Bot Team Dashboard', 'Open tasks by assignee:', 'Assigned to Sean',
-              '>Waiting on Sean</h2>', '>Timeline</h2>', '>Tasks</h2>', 'Rules &amp; playbooks', 'ship ship ship']
+    labels = ['Backlogr Dashboard', 'Open tasks by assignee:', 'Assigned to Operator',
+              '>Waiting on Operator</h2>', '>Timeline</h2>', '>Tasks</h2>', 'Rules &amp; playbooks', f'Backlogr {core.__version__}']
     positions = [html.index(label) for label in labels]
     assert positions == sorted(positions)
 
 
-def test_derivation_and_order(db):
+def test_derivation_and_order(db, tmp_path, monkeypatch):
+    cats = tmp_path / 'categories.json'
+    cats.write_text(json.dumps([['Reviews', r'review'], ['Infra', r'dns|homelab']]))
+    monkeypatch.setenv('BACKLOGR_DASHBOARD_CATEGORIES', str(cats))
+    dashboard.categories.cache_clear()
     now = datetime(2026, 10, 26, 12, tzinfo=dashboard.TZ)
     old = now - timedelta(days=3)
-    make(db, 'Forge: Code review', status='waiting_on_sean', created_at=old.isoformat(),
+    make(db, 'Forge: Code review', status='waiting_on_owner', created_at=old.isoformat(),
          due='2026-10-27', note='latest detail')
-    newest = make(db, 'Homelab: DNS', status='waiting_on_sean', created_at=now.isoformat(), owner_bot='homelab-ops')
+    newest = make(db, 'Homelab: DNS', status='waiting_on_owner', created_at=now.isoformat(), owner_bot='Homelab')
     make(db, 'Active', status='in_progress', created_at=now.isoformat())
     blocked = make(db, 'Blocked', status='blocked', created_at=old.isoformat())
     for n in range(42):
         make(db, f'Finished {n}', status='done', created_at=(old + timedelta(minutes=n)).isoformat())
     model = dashboard.load_data(db, now)
     assert model['WAITING'][0]['id'] == newest['id']
-    assert model['WAITING'][0]['bot'] == 'Homelab Ops'
+    assert model['WAITING'][0]['bot'] == 'Homelab' and model['WAITING'][0]['title'] == 'DNS'
+    assert model['WAITING'][0]['detail'] == 'Which option?'
+    assert model['WAITING'][0]['cat'] == 'Infra'
     assert model['WAITING'][1]['title'] == 'Code review'
-    assert model['WAITING'][1]['cat'] == 'Example'
+    assert model['WAITING'][1]['cat'] == 'Reviews'
     assert model['WAITING'][1]['due'] == 'Tue Oct 27'
     assert model['PROGRESS'][0]['id'] == blocked['id']
     assert len(model['DONE']) == 40 and model['OLDER_DONE'] == 2
     assert model['DONE'][0]['title'] == 'Finished 41'
     assert model['DONE'][-1]['title'] == 'Finished 2'
     assert dashboard.trunc('status: todo -> in_progress; ready') == 'ready'
-    assert dashboard.bot('hal9000') == 'Chukar'
-    assert dashboard.bot('unknown') == 'Chukar'
+    assert model['CATS'] == ['Reviews', 'Infra', 'Other']
+    assert dashboard.bot('  Mint ') == 'Mint' and dashboard.bot('') == 'unassigned'
+    assert dashboard.trunc('x' * 500, 10) == 'x' * 10 + '…'
+    dashboard.categories.cache_clear()
     assert dashboard.link({'ref': 'https://github.com/example/project/pull/7'})['label'] == 'project #7'
 
 
@@ -143,12 +175,12 @@ def test_timeline_window_limit_timezone_and_actor(db):
     for n in range(85):
         when = now - timedelta(minutes=n)
         db.execute('INSERT INTO updates(task_id,ts,actor,note) VALUES(?,?,?,?)',
-                   (t['id'], when.isoformat(), 'homelab' if n == 0 else 'Operator', f'event {n}'))
+                   (t['id'], when.isoformat(), 'Homelab' if n == 0 else '', f'event {n}'))
     model = dashboard.load_data(db, now)
     events = [e for d in model['DAYS'] for e in d['events']]
     assert len(events) == 80
     assert model['DAYS'][0]['day'] == 'Mon Oct 26'
-    assert events[0] == {'time': '12:00 PM', 'bot': 'Homelab Ops', 'text': f'{t["id"]} Timeline: event 0'}
+    assert events[0] == {'time': '12:00 PM', 'bot': 'Homelab', 'text': f'{t["id"]} Timeline: event 0'}
     assert events[1]['bot'] == 'Mint'
     assert events[-1]['text'].endswith('event 79')
 
