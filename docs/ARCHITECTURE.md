@@ -1,4 +1,4 @@
-# Architecture (2.0.0)
+# Architecture (2.1.0)
 
 ## Components and request flow
 
@@ -31,7 +31,7 @@ a SQLite backup once that day. See [configuration](CONFIGURATION.md) and
 busy timeout, and foreign keys enabled, creates missing schema objects, and adds
 missing task columns. `PRAGMA user_version` advances to schema version 4 after additive
 setup; version 3 also rewrites the pre-2.0 stored values `waiting_on_sean` and `via_chukar`
-to `waiting_on_owner` and `via_coordinator`; version 4 turns empty-string due dates into null. This is distinct from application version 2.0.0. `doctor` checks it.
+to `waiting_on_owner` and `via_coordinator`; version 4 turns empty-string due dates into null. This is distinct from the application version. `doctor` checks it.
 
 | Table | Contents |
 |---|---|

@@ -4,6 +4,8 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+## 2.1.0
+
 - Container image: `Dockerfile` (non-root, `/data` volume, health check), `compose.yaml` (loopback-only port), a CI job that builds and smoke-tests the image, and a release workflow that publishes `ghcr.io/oceanswave/backlogr` on `v*` tags.
 - JSON exports (nightly and `backlogr export`) now include rules and playbooks in the `rules_import` format, so an export is a complete JSON backup. `backlogr import` (and `--restore`, `task_import`, API `import`) upserts them.
 - Add `rule_remove` and `playbook_remove` across core, CLI (`rules remove`, `playbooks remove`), MCP and API. Removing a playbook keeps its rules; rules whose primary playbook it was are detached.
