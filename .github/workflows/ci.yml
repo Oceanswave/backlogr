@@ -11,7 +11,7 @@ concurrency:
 jobs:
   test:
     # GitHub-hosted only: this is a public repository, so pull requests from forks must never reach a self-hosted runner.
-    uses: Oceanswave/github-workflows/.github/workflows/python-ci.yml@24d2f23f976a3a10c073f21d1ac7cb12c9c832c7
+    uses: Oceanswave/github-workflows/.github/workflows/python-ci.yml@6fa5c4cbe77352efdff40ed336dbf878aef3f7e9
     with:
       runs-on: '"ubuntu-latest"'
       python-version: '3.12'
