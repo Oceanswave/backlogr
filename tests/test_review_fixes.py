@@ -7,9 +7,9 @@ from contextlib import closing
 import pytest
 from starlette.testclient import TestClient
 
-import cli
-import core
-import server
+from backlogr import cli
+from backlogr import core
+from backlogr import server
 
 
 @pytest.fixture

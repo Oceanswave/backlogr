@@ -87,7 +87,7 @@ Server name `backlogr`, streamable HTTP at `$BACKLOGR_URL/mcp`, header `Authoriz
 - **Stdio-only clients** (runs on the server host, reads `.env` there):
   ```json
   {"mcpServers": {"backlogr": {"command": "ssh", "args": ["<user>@<server-host>",
-    "cd backlogr && set -a && . ./.env && .venv/bin/python server.py --stdio"]}}}
+    "cd backlogr && set -a && . ./.env && .venv/bin/backlogr-server --stdio"]}}}
   ```
 - **Any other client:** streamable HTTP, the URL above, the bearer header.
 

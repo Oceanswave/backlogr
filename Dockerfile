@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
-COPY cli.py core.py dashboard.py server.py ./
+COPY backlogr ./backlogr
 RUN pip install --no-cache-dir . \
  && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin backlogr \
  && mkdir -p /data && chown backlogr:backlogr /data && chmod 700 /data

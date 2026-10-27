@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=%h/backlogr
 EnvironmentFile=%h/backlogr/.env
-ExecStart=%h/backlogr/.venv/bin/python %h/backlogr/server.py
+ExecStart=%h/backlogr/.venv/bin/backlogr-server
 Restart=always
 RestartSec=3
 

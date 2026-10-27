@@ -18,7 +18,7 @@ jobs:
       install-args: -e .[test] shellcheck-py
       test-command: |
         shellcheck scripts/*.sh ensure.sh
-        python -m py_compile cli.py core.py server.py dashboard.py
+        python -m compileall -q backlogr server.py
         python -m pytest -q tests
         if grep -rnE 'TASKS?_(DB|PORT|HOSTS|TOKEN|URL|EXPORT|BACKUP)|task-manager|Task Manager|bot-team-tasks|/workspace/|/cursor/stores' --include='*.py' --include='*.sh' --include='*.service' --include='*.toml' --include='*.md' --include='*.example' --exclude=MIGRATION.md --exclude-dir=.github . ; then echo "legacy name found"; exit 1; fi
   container:

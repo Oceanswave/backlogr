@@ -1,6 +1,6 @@
 """backlogr CLI. Talks to the remote service when BACKLOGR_URL is set (token from BACKLOGR_TOKEN_FILE), else the local DB. Run `backlogr -h`."""
 import argparse, ipaddress, json, os, sys, urllib.parse, urllib.request, urllib.error
-import core
+from . import core
 import stat, sqlite3
 from http.client import HTTPException
 from pathlib import Path

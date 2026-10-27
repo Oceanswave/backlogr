@@ -155,3 +155,16 @@ No configuration changes. On the first connection, schema version 4 turns any
 JSON exports now also contain `rules` and `playbooks`; importing such an export
 upserts them. Older code ignores those keys when importing. A container image is
 published at `ghcr.io/oceanswave/backlogr:2.1.0`; the systemd install is unchanged.
+
+## v2.2.0
+
+The modules moved into the `backlogr` package. Deploy as usual (`pip install -e .`
+regenerates the `backlogr` and `backlogr-server` commands). Existing systemd units
+that run `.venv/bin/python server.py` keep working through a compatibility launcher;
+switch them to the new unit when convenient:
+```
+install -m 644 deploy/backlogr.service ~/.config/systemd/user/backlogr.service
+systemctl --user daemon-reload && systemctl --user restart backlogr
+```
+Code that imported `core`, `cli`, `server` or `dashboard` directly now imports
+them from `backlogr` (for example `from backlogr import core`).
