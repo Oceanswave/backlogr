@@ -1,0 +1,20 @@
+# docker compose up -d   (reads BACKLOGR_TOKEN and other settings from .env; see deploy/env.example)
+services:
+  backlogr:
+    build: .
+    image: ghcr.io/oceanswave/backlogr:latest
+    env_file: .env
+    environment:
+      # Container paths and bind address win over any host paths in .env.
+      BACKLOGR_DB: /data/backlogr.db
+      BACKLOGR_EXPORT: /data/exports/backlogr-export.json
+      BACKLOGR_BACKUP_DIR: /data/backups
+      BACKLOGR_HOSTS: 0.0.0.0
+      BACKLOGR_PORT: "8796"
+    ports:
+      - "127.0.0.1:8796:8796"   # loopback only: put an authenticating proxy (e.g. tailscale serve) in front
+    volumes:
+      - backlogr-data:/data
+    restart: unless-stopped
+volumes:
+  backlogr-data:
