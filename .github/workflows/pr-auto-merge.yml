@@ -25,4 +25,4 @@ jobs:
       runs-on: '["ubuntu-latest"]'
       head-branch: ${{ github.event.workflow_run.head_branch }}
       expected-head: ${{ github.event.workflow_run.head_sha }}
-      required-checks: '[{"name":"test","appId":15368}]'
+      required-checks: '[{"name":"test / Python CI","appId":15368}]'
