@@ -53,7 +53,9 @@ The [CI workflow](.github/workflows/ci.yml) runs on pushes to `main` and on pull
 (including forks). It calls the shared, SHA-pinned
 [`python-ci.yml`](https://github.com/Oceanswave/github-workflows/blob/main/.github/workflows/python-ci.yml)
 reusable workflow on GitHub-hosted `ubuntu-latest` with Python 3.12 (the package requires 3.11+);
-its check is named `test / Python CI`. It installs the test extra and `shellcheck-py`, runs
+its check is named `test / Python CI`. A separate `container` job builds the Docker image and
+smoke-tests health, auth and an API write. Pushing a `v*` tag publishes the image to GHCR
+([release-image.yml](.github/workflows/release-image.yml)). The test job installs the test extra and `shellcheck-py`, runs
 ShellCheck on `scripts/*.sh` and `ensure.sh`, compiles `cli.py`, `core.py`,
 `server.py`, and `dashboard.py`, runs `python -m pytest -q tests`, and rejects legacy names and
 private workspace paths (with the documented migration exception). CI does

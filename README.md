@@ -30,6 +30,20 @@ As a systemd user service: `install -D -m 644 deploy/backlogr.service ~/.config/
 
 Expose it only on a private network or behind an authenticating reverse proxy, for example Tailscale serve under a path: `tailscale serve --bg --https=443 --set-path /backlogr http://127.0.0.1:8796`, then `BACKLOGR_URL=https://backlogr.example.invalid/backlogr`. Add that host name to `BACKLOGR_ALLOWED_HOSTS` for MCP transport checks; enforce Host restrictions for all routes at the proxy. Use TLS and authentication before any public exposure. Routes: `$BACKLOGR_URL/mcp`, `$BACKLOGR_URL/healthz`, `$BACKLOGR_URL/api/<op>`.
 
+### In a container
+
+Release tags publish `ghcr.io/oceanswave/backlogr:<version>` (and `:latest`). The image runs as a
+non-root user, keeps the DB, exports and backups in the `/data` volume, and has a health check.
+```
+cp deploy/env.example .env && chmod 600 .env    # set BACKLOGR_TOKEN; path settings are overridden
+docker compose up -d                             # or: docker build -t backlogr . && docker run ...
+curl -fsS http://127.0.0.1:8796/healthz
+docker compose exec backlogr backlogr list       # CLI inside the container, local mode
+```
+`compose.yaml` publishes the port on loopback only; put an authenticating proxy such as `tailscale serve`
+in front, and add its host name to `BACKLOGR_ALLOWED_HOSTS`. Inside the container the server binds
+`0.0.0.0` so the published port reaches it.
+
 ## Configuration
 
 See the [complete reference](docs/CONFIGURATION.md) for all environment variables, including deployment settings.
