@@ -6,6 +6,7 @@ All notable changes. Versions follow semantic versioning.
 
 - JSON exports (nightly and `backlogr export`) now include rules and playbooks in the `rules_import` format, so an export is a complete JSON backup. `backlogr import` (and `--restore`, `task_import`, API `import`) upserts them.
 - Add `rule_remove` and `playbook_remove` across core, CLI (`rules remove`, `playbooks remove`), MCP and API. Removing a playbook keeps its rules; rules whose primary playbook it was are detached.
+- Clear a due date with `backlogr update ID --due none` or `due=""` in `task_update`/API `update`; it is stored as null and logged as `due: <old> -> none`. Previously a blank due was stored as an empty string. Schema version 4 normalizes such rows on connect.
 
 ## 2.0.0
 

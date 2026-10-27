@@ -342,3 +342,25 @@ def test_exports_and_backups_are_private(db, tmp_path, monkeypatch):
     monkeypatch.setattr(server, 'BACKUP_KEEP', 1)
     path = server.backup()
     assert oct(os.stat(path).st_mode & 0o777) == '0o600'
+
+
+def test_due_can_be_cleared(db, capsys, tmp_path):
+    t = core.create(db, 'dated', 'bot', 'direct_to_bot', 'bot', due='2026-11-01')
+    assert core.create(db, 'blank', 'bot', 'direct_to_bot', 'bot', due='  ')['due'] is None
+    cleared = core.update(db, t['id'], 'bot', due='')
+    assert cleared['due'] is None and cleared['updates'][-1]['note'] == 'due: 2026-11-01 -> none'
+    with pytest.raises(core.TaskError, match='nothing to update'):
+        core.update(db, t['id'], 'bot', due='')
+    assert cli.main(['update', t['id'], '--by', 'bot', '--due', '2026-12-01']) == 0
+    assert cli.main(['update', t['id'], '--by', 'bot', '--due', 'none']) == 0
+    assert core.get(db, t['id'])['due'] is None
+    assert server.task_update(t['id'], 'bot', due='2026-12-02')['due'] == '2026-12-02'
+    assert server.task_update(t['id'], 'bot', due='')['due'] is None
+    # a pre-2.1 database that stored a cleared due as '' is normalized on connect
+    path = str(tmp_path / 'v3.db')
+    with closing(core.connect(path)) as c:
+        c.execute("INSERT INTO tasks(id,title,owner_bot,status,source,due,created_at,updated_at) "
+                  "VALUES('T-v3','old','bot','todo','direct_to_bot','','2026-01-01','2026-01-01')")
+        c.execute('PRAGMA user_version=3')
+    with closing(core.connect(path)) as c:
+        assert core.get(c, 'T-v3', with_log=False)['due'] is None
