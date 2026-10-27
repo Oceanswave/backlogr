@@ -2,7 +2,7 @@
 
 All notable changes. Versions follow semantic versioning.
 
-## Unreleased
+## 2.2.0
 
 - The code is now the `backlogr` package (`backlogr.core`, `backlogr.cli`, `backlogr.server`, `backlogr.dashboard`) instead of top-level `core`/`cli`/`server`/`dashboard` modules that could collide with other installed packages. The `backlogr` and `backlogr-server` commands are unchanged; `python -m backlogr` runs the CLI. The systemd unit now runs `backlogr-server`; a root `server.py` launcher keeps older units working until 3.0.
 

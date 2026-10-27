@@ -1,4 +1,4 @@
-# Install Backlogr 2.1.0 for agents
+# Install Backlogr 2.2.0 for agents
 
 Requires Git, Python 3.11+, venv/pip, curl, and Bash on a Unix-like system.
 Replace `<repo-url>` with the public clone URL. Run the blocks in the same Bash
@@ -15,7 +15,7 @@ cd "$RELEASE_CHECK_DIR/repo"
 python3 -m venv "$RELEASE_CHECK_DIR/venv"
 . "$RELEASE_CHECK_DIR/venv/bin/activate"
 python -m pip install -e .
-backlogr --version  # expected: 2.1.0
+backlogr --version  # expected: 2.2.0
 ```
 
 ## Configure
@@ -73,7 +73,7 @@ backlogr new "Verify disposable installation" --owner ReleaseAgent \
     --done-means "Server health and diagnostics succeed" --key release:install-check
 # expected: T-<six hex digits> todo
 backlogr doctor
-# expected: version 2.1.0, owner owner, mode remote, token file mode 600,
+# expected: version 2.2.0, owner owner, mode remote, token file mode 600,
 # healthz: OK, authenticated list: OK; exit status 0
 ```
 

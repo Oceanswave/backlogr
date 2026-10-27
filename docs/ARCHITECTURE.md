@@ -1,4 +1,4 @@
-# Architecture (2.1.0)
+# Architecture (2.2.0)
 
 ## Components and request flow
 
