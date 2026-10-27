@@ -56,6 +56,8 @@ class Remote:
     def playbook_get(self, c, **args): return self._call("playbook_get", **args)
     def playbook_add(self, c, **args): return self._call("playbook_add", **args)
     def rules_import(self, c, **args): return self._call("rules_import", **args)
+    def rule_remove(self, c, **args): return self._call("rule_remove", **args)
+    def playbook_remove(self, c, **args): return self._call("playbook_remove", **args)
     def export(self, c, path=None):
         data = self._call("export_data"); path = path or core.EXPORT_PATH
         core.write_private(path, lambda f: json.dump(data, f, indent=1))
@@ -169,6 +171,7 @@ def main(argv=None):
         listing = command('list')
         getting = command('get'); getting.add_argument('id')
         adding = command('add'); adding.add_argument('id')
+        command('remove').add_argument('id')
         if section == 'rules':
             listing.add_argument('--playbook'); listing.add_argument('--category')
             listing.add_argument('--untested', action='store_true'); listing.add_argument('--testable', choices=['yes', 'no'])
@@ -199,7 +202,7 @@ def main(argv=None):
                 op = 'rules_import'
             else:
                 op = prefix + '_' + a.operation
-                if a.operation == 'get': args = dict(id=a.id)
+                if a.operation in ('get', 'remove'): args = dict(id=a.id)
                 elif a.operation == 'list' and a.cmd == 'rules':
                     args = dict(playbook=a.playbook, category=a.category,
                                 testable=None if a.testable is None else a.testable == 'yes')

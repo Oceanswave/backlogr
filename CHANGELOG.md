@@ -4,6 +4,9 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+- JSON exports (nightly and `backlogr export`) now include rules and playbooks in the `rules_import` format, so an export is a complete JSON backup. `backlogr import` (and `--restore`, `task_import`, API `import`) upserts them.
+- Add `rule_remove` and `playbook_remove` across core, CLI (`rules remove`, `playbooks remove`), MCP and API. Removing a playbook keeps its rules; rules whose primary playbook it was are detached.
+
 ## 2.0.0
 
 Prepares Backlogr for public release. See [MIGRATION.md](MIGRATION.md#v200) for upgrade steps.

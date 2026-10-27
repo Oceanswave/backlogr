@@ -70,8 +70,14 @@ protect references; a composite primary key prevents duplicate memberships.
 Boolean and test-content checks protect the testable invariant in SQLite as well
 as in core validation. Existing task rows and append-only history are preserved.
 
-SQLite backups contain rules and playbooks. The existing task JSON export and
-trusted task snapshot restore remain task-only; keep the rules import file for
-reproducible seeds and use a SQLite backup for complete recovery. No new
+SQLite backups contain rules and playbooks. Since 2.1.0 the JSON export (nightly
+and `backlogr export`) also carries `rules` and `playbooks` in this import format,
+and `backlogr import export.json` (with or without `--restore`) upserts them through
+`rules_import`. Restored rules get the importing actor and new timestamps as
+creation metadata; use a SQLite backup when those must be preserved.
+
+`backlogr rules remove ID` (`rule_remove`) deletes a rule and its playbook links.
+`backlogr playbooks remove ID` (`playbook_remove`) deletes a playbook but keeps its
+rules; rules whose primary playbook it was get `playbook_id` null. No new
 environment variables or permissions are needed. HTTP API and MCP use the same
 authentication as tasks; the existing 1 MiB API body limit applies to imports.

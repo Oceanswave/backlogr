@@ -453,7 +453,11 @@ def flags(c, stale_hours=24, created_within_hours=24, ref=None):
     }
 
 def bulk_import(c, items, actor, *, restore=False):
-    if isinstance(items, dict): items = items.get("tasks")
+    """Import tasks (a list, or an export object). An export's rules and playbooks are upserted with rules_import."""
+    rules = None
+    if isinstance(items, dict):
+        rules = {k: items[k] for k in ("rules", "playbooks") if items.get(k)} or None
+        items = items.get("tasks", [] if rules else None)
     if not isinstance(items, list): raise TaskError("import requires a list or an object with tasks")
     created, skipped, errors = [], [], []
     columns = {r[1] for r in c.execute("PRAGMA table_info(tasks)")}
@@ -487,14 +491,19 @@ def bulk_import(c, items, actor, *, restore=False):
             created.append(it["id"])
         except Exception as e:
             errors.append({"index": i, "title": item.get("title") if isinstance(item, dict) else None, "error": str(e)})
-    return {"created": created, "skipped": skipped, "errors": errors}
+    result = {"created": created, "skipped": skipped, "errors": errors}
+    if rules:
+        try: result["rules"] = rules_import(c, rules, actor)
+        except TaskError as e: errors.append({"index": None, "title": "rules/playbooks", "error": str(e)})
+    return result
 
 def snapshot(c):
-    """Every task with its log and links, read in one transaction."""
+    """Every task with its log and links, plus rules and playbooks, read in one transaction."""
     own_transaction = not c.in_transaction
     if own_transaction: c.execute("BEGIN")
     try:
-        return {"exported_at": now(), "tasks": [get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()]}
+        return {"exported_at": now(), "tasks": [get(c, r["id"]) for r in c.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()],
+                **rules_snapshot(c)}
     finally:
         if own_transaction: c.execute("COMMIT")
 
@@ -691,6 +700,38 @@ def playbook_add(c, id, name, skill='', test='', description='', rule_ids=None):
         c.execute('DELETE FROM playbook_rules WHERE playbook_id=?', (id,))
         c.executemany('INSERT INTO playbook_rules VALUES (?,?)', [(id, rid) for rid in ids])
         return playbook_get(c, id)
+
+
+RULE_FIELDS = ("id", "title", "rule", "test", "evidence", "source", "testable", "category", "applies_to", "playbook_id")
+PLAYBOOK_FIELDS = ("id", "name", "skill", "test", "description", "rule_ids")
+
+def rules_snapshot(c):
+    """Rules and playbooks in the rules_import format, so an export restores them."""
+    return {"rules": [{k: r[k] for k in RULE_FIELDS} for r in rule_list(c)],
+            "playbooks": [{k: p[k] for k in PLAYBOOK_FIELDS} for p in playbook_list(c)]}
+
+
+def rule_remove(c, id):
+    """Delete a rule and its playbook links."""
+    with _rules_transaction(c):
+        rule_get(c, id)
+        books = [r[0] for r in c.execute('SELECT playbook_id FROM playbook_rules WHERE rule_id=? ORDER BY playbook_id', (id,))]
+        c.execute('DELETE FROM playbook_rules WHERE rule_id=?', (id,))
+        c.execute('DELETE FROM rules WHERE id=?', (id,))
+        ts = now()
+        c.executemany('UPDATE playbooks SET updated_at=? WHERE id=?', [(ts, b) for b in books])
+    return {"removed": id, "playbooks": books}
+
+
+def playbook_remove(c, id):
+    """Delete a playbook. Its rules are kept; rules whose primary playbook it was are detached (playbook_id null)."""
+    with _rules_transaction(c):
+        playbook_get(c, id)
+        detached = [r[0] for r in c.execute('SELECT id FROM rules WHERE playbook_id=? ORDER BY id', (id,))]
+        c.execute('UPDATE rules SET playbook_id=NULL, updated_at=? WHERE playbook_id=?', (now(), id))
+        c.execute('DELETE FROM playbook_rules WHERE playbook_id=?', (id,))
+        c.execute('DELETE FROM playbooks WHERE id=?', (id,))
+    return {"removed": id, "detached_rules": detached}
 
 
 def rules_import(c, items, actor):

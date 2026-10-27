@@ -64,8 +64,8 @@ mechanism; see [migration](../MIGRATION.md).
 
 ## Rules and playbooks
 
-Core exposes `rule_list`, `rule_get`, `rule_add`, `rule_untested`, `playbook_list`,
-`playbook_get`, `playbook_add`, and `rules_import`. MCP tools and authenticated
+Core exposes `rule_list`, `rule_get`, `rule_add`, `rule_untested`, `rule_remove`,
+`playbook_list`, `playbook_get`, `playbook_add`, `playbook_remove`, and `rules_import`. MCP tools and authenticated
 HTTP API operations have the same names. Rule writes and imports take an immediate
 write lock; nested operations use savepoints, so records and memberships commit
 or roll back together. Imports resolve playbooks before rules, then link rules,

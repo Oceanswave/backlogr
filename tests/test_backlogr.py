@@ -145,7 +145,7 @@ def test_mcp_http_end_to_end(server):
                 async with ClientSession(r, w) as s:
                     s_name = (await s.initialize()).serverInfo.name
                     names = {t.name for t in (await s.list_tools()).tools}
-                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_waiting","task_act","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import"}
+                    assert s_name == "backlogr" and names == {"task_create","task_update","task_add_link","task_get","task_list","task_flags","task_import","task_stale","task_waiting","task_act","rule_list","rule_get","rule_add","rule_untested","playbook_list","playbook_get","playbook_add","rules_import","rule_remove","playbook_remove"}
                     res = await s.call_tool("task_create", dict(title="hi", owner_bot="Mint", source="direct_to_bot", actor="Mint"))
                     tid = json.loads(res.content[0].text)["id"]
                     res = await s.call_tool("task_update", dict(id=tid, actor="Mint", status="blocked", note="needs card"))

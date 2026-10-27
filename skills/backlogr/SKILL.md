@@ -77,8 +77,8 @@ can attest completion with `act done`, subject to `BACKLOGR_APPROVERS`; this can
 supply missing approval and skip the test gate. These are workflow rules, not
 independent identity verification. `undo` requires no intervening task change.
 
-Normal import accepts a task list or exported `{"tasks": [...]}` object and
-enforces creation gates. Only trusted local recovery may use
+Normal import accepts a task list or an exported `{"tasks": [...], "rules": [...],
+"playbooks": [...]}` object and enforces creation gates; rules and playbooks are upserted. Only trusted local recovery may use
 `backlogr import snapshot.json --by Agent --restore`; this preserves snapshot
 fields/history and bypasses gates. Remote `--restore` is rejected. Export and
 restore can write files/DBs: use only the explicitly authorized destination.
@@ -99,11 +99,13 @@ imports can create both together. Tests are stored, never executed by Backlogr.
 |---|---|
 | `rule_list(playbook?, testable?, category?)` | list rules; filters combine with AND |
 | `rule_get(id)` | full rule including creation metadata |
-| `rule_add(id, rule, title?, test?, evidence?, source?, testable?, category?, applies_to?, playbook_id?, actor?="owner", replace?=false)` | create or explicitly replace a full rule; always pass your bot name as actor |
+| `rule_add(id, rule, title?, test?, evidence?, source?, testable?, category?, applies_to?, playbook_id?, actor?=BACKLOGR_OWNER, replace?=false)` | create or explicitly replace a full rule; always pass your bot name as actor |
 | `rule_untested()` | every rule with testable=false, including descriptive test text |
 | `playbook_list()` | all playbooks with linked rules |
 | `playbook_get(id)` | one playbook with `rule_ids` and embedded `rules` |
 | `playbook_add(id, name, skill?, test?, description?, rule_ids?)` | upsert playbook; unknown rule IDs fail |
+| `rule_remove(id)` | delete a rule and its playbook links |
+| `playbook_remove(id)` | delete a playbook; its rules stay, primary ones detached |
 | `rules_import(items, actor)` | atomic `{rules: [...], playbooks: [...]}` upsert; created/updated/unchanged counts |
 
 ```bash
