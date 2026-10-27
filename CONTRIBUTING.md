@@ -56,7 +56,7 @@ reusable workflow on GitHub-hosted `ubuntu-latest` with Python 3.12 (the package
 its check is named `test / Python CI`. A separate `container` job builds the Docker image and
 smoke-tests health, auth and an API write. Pushing a `v*` tag publishes the image to GHCR
 ([release-image.yml](.github/workflows/release-image.yml)). The test job installs the test extra and `shellcheck-py`, runs
-ShellCheck on `scripts/*.sh` and `ensure.sh`, compiles `cli.py`, `core.py`,
-`server.py`, and `dashboard.py`, runs `python -m pytest -q tests`, and rejects legacy names and
+ShellCheck on `scripts/*.sh` and `ensure.sh`, byte-compiles the `backlogr`
+package and the root `server.py` launcher, runs `python -m pytest -q tests`, and rejects legacy names and
 private workspace paths (with the documented migration exception). CI does
 not currently enforce a formatter or build a release package.

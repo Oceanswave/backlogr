@@ -2,6 +2,11 @@
 
 ## Components and request flow
 
+The code is the `backlogr` package (`backlogr/core.py`, `cli.py`, `server.py`,
+`dashboard.py`), installed with the `backlogr` and `backlogr-server` entry points;
+`python -m backlogr` runs the CLI. A root `server.py` launcher remains only for
+pre-2.2 systemd units and will be removed in 3.0.
+
 `core.py` owns SQLite access, validation, task transitions, approval/completion
 gates, query views, import/export, human actions. `cli.py`
 parses `backlogr` commands. Without `BACKLOGR_URL` it calls core directly; with

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from html import escape
 from urllib.parse import urlsplit
 
-import core
+from . import core
 
 # Display time zone: BACKLOGR_TZ (an IANA name such as Europe/Berlin), else the server's local zone.
 TZ = ZoneInfo(os.environ["BACKLOGR_TZ"]) if os.environ.get("BACKLOGR_TZ") else datetime.now().astimezone().tzinfo

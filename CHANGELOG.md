@@ -4,6 +4,8 @@ All notable changes. Versions follow semantic versioning.
 
 ## Unreleased
 
+- The code is now the `backlogr` package (`backlogr.core`, `backlogr.cli`, `backlogr.server`, `backlogr.dashboard`) instead of top-level `core`/`cli`/`server`/`dashboard` modules that could collide with other installed packages. The `backlogr` and `backlogr-server` commands are unchanged; `python -m backlogr` runs the CLI. The systemd unit now runs `backlogr-server`; a root `server.py` launcher keeps older units working until 3.0.
+
 ## 2.1.0
 
 - Container image: `Dockerfile` (non-root, `/data` volume, health check), `compose.yaml` (loopback-only port), a CI job that builds and smoke-tests the image, and a release workflow that publishes `ghcr.io/oceanswave/backlogr` on `v*` tags.

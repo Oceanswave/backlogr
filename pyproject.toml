@@ -23,15 +23,15 @@ dependencies = ["mcp==1.30.0", "uvicorn==0.54.0", "starlette==1.10.0"]
 test = ["pytest==9.1.1"]
 
 [project.scripts]
-backlogr = "cli:main"
-backlogr-server = "server:main_entry"
+backlogr = "backlogr.cli:main"
+backlogr-server = "backlogr.server:main_entry"
 
 [project.urls]
 Repository = "https://github.com/Oceanswave/backlogr"
 Changelog = "https://github.com/Oceanswave/backlogr/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
-py-modules = ["cli", "core", "server", "dashboard"]
+packages = ["backlogr"]
 
 [tool.setuptools.dynamic]
-version = {attr = "core.__version__"}
+version = {attr = "backlogr.core.__version__"}

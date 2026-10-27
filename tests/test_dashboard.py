@@ -7,9 +7,9 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-import core
-import dashboard
-import server
+from backlogr import core
+from backlogr import dashboard
+from backlogr import server
 
 
 @pytest.fixture(autouse=True)

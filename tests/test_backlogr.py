@@ -1,6 +1,6 @@
 import os, sys, json, sqlite3, datetime as dt, subprocess, time, socket, pytest
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, HERE)
-import core, cli
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from backlogr import core, cli
 
 @pytest.fixture
 def c(tmp_path):
@@ -82,7 +82,7 @@ TOK = "test-token-0123456789abcdef"
 def server(tmp_path):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     env = dict(os.environ, BACKLOGR_DB=str(tmp_path / "m.db"), BACKLOGR_PORT=str(port), BACKLOGR_TOKEN=TOK)
-    p = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen([sys.executable, "-m", "backlogr.server"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try: socket.create_connection(("127.0.0.1", port), 0.2).close(); break
         except OSError: time.sleep(0.2)
