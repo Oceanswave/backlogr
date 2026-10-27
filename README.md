@@ -135,7 +135,7 @@ It refuses to run (exit 4) if tracked files in the install are modified. Otherwi
 
 List pagination is optional: `--limit N --offset N` (MCP/API: `limit`, `offset`), with no limit by default. Both must be non-negative integers; pagination applies after filtering.
 
-`backlogr import export.json --by Bot` accepts either the exported `{"tasks": [...]}` object or a task list. Normal imports, including API/MCP snapshots, enforce approval, evidence, and test gates; snapshot history and derived metadata are not restored. For trusted local recovery, `backlogr import export.json --by Bot --restore` preserves IDs, timestamps, task fields, update history, and links verbatim, bypassing creation gates. Remote `--restore` is rejected; unset `BACKLOGR_URL` for local use. Existing IDs are left as they are and reported in `skipped`; the result also lists `created` IDs and per-item `errors`. SQLite backups remain the primary restore method.
+`backlogr export` writes tasks plus rules and playbooks. `backlogr import export.json --by Bot` accepts either the exported `{"tasks": [...], "rules": [...], "playbooks": [...]}` object or a task list; rules and playbooks are upserted as in `rules import`. Normal imports, including API/MCP snapshots, enforce approval, evidence, and test gates; snapshot history and derived metadata are not restored. For trusted local recovery, `backlogr import export.json --by Bot --restore` preserves IDs, timestamps, task fields, update history, and links verbatim, bypassing creation gates. Remote `--restore` is rejected; unset `BACKLOGR_URL` for local use. Existing IDs are left as they are and reported in `skipped`; the result also lists `created` IDs and per-item `errors`. SQLite backups remain the primary restore method.
 
 ## One-call human actions (`act`)
 
@@ -165,6 +165,7 @@ backlogr playbooks add P-check --name "Example checks" --rules M1 --skill exampl
 backlogr rules list --playbook P-check --testable yes --json
 backlogr rules get M1
 backlogr rules untested
+backlogr rules remove M1            # also: backlogr playbooks remove P-check (keeps its rules)
 backlogr playbooks list
 backlogr playbooks get P-check --json
 backlogr rules import tests/fixtures/rules-playbooks.json --by Agent --json
@@ -188,8 +189,8 @@ excluded. MCP/API `rule_untested` uses the same flag-based filter.
 `rules list` also accepts `--category`. `--json` works at every command level.
 
 The same authenticated HTTP API and MCP expose `rule_list`, `rule_get`,
-`rule_add`, `rule_untested`, `playbook_list`, `playbook_get`, `playbook_add`, and
-`rules_import`. API operations use those exact names: POST to
+`rule_add`, `rule_untested`, `rule_remove`, `playbook_list`, `playbook_get`,
+`playbook_add`, `playbook_remove`, and `rules_import`. API operations use those exact names: POST to
 `$BACKLOGR_URL/api/rule_get` with `{"id":"M1"}`, for example. See the
 [agent skill](skills/backlogr/SKILL.md) for signatures and
 [import format](docs/RULES_PLAYBOOKS.md) for relationships and bulk import.

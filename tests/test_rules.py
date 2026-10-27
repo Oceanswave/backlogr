@@ -226,3 +226,39 @@ def test_doctor_rules_schema(db, capsys):
     # A healthy connection recreates the table; schema inspection also covers it.
     assert cli.main(['doctor']) == 0
     assert 'columns: OK' in capsys.readouterr().out
+
+
+def test_export_round_trips_rules_and_playbooks(db, tmp_path):
+    assert core.rules_import(db, seed(), 'Agent')['created'] > 0
+    core.rule_add(db, 'manual', rule='Look', test='manual review', testable=False, actor='Agent')
+    core.create(db, 'task', 'Agent', 'bot_initiated', 'Agent')
+    before = core.rules_snapshot(db)
+    out = core.export(db, str(tmp_path / 'e.json'))
+    data = json.loads(Path(out['path']).read_text())
+    assert data['rules'] == before['rules'] and data['playbooks'] == before['playbooks']
+    for restore in (False, True):
+        with closing(core.connect(str(tmp_path / f'fresh-{restore}.db'))) as fresh:
+            result = core.bulk_import(fresh, data, 'Agent', restore=restore)
+            assert result['errors'] == [] and len(result['created']) == 1
+            assert result['rules']['created'] == len(before['rules']) + len(before['playbooks'])
+            assert core.rules_snapshot(fresh) == before
+    # rules-only objects import too, and repeating is a no-op
+    again = core.bulk_import(db, {'rules': before['rules'], 'playbooks': before['playbooks']}, 'Agent')
+    assert again['created'] == [] and again['rules']['created'] == again['rules']['updated'] == 0
+
+
+def test_remove_rules_and_playbooks(db, capsys):
+    core.playbook_add(db, 'P1', 'Checks')
+    core.playbook_add(db, 'P2', 'Other')
+    core.rule_add(db, 'R1', 'one', playbook_id='P1')
+    core.rule_add(db, 'R2', 'two', playbook_id='P1')
+    core.playbook_add(db, 'P2', 'Other', rule_ids=['R1'])
+    assert core.rule_remove(db, 'R1') == {'removed': 'R1', 'playbooks': ['P1', 'P2']}
+    assert core.playbook_get(db, 'P1')['rule_ids'] == ['R2'] and core.playbook_get(db, 'P2')['rule_ids'] == []
+    with pytest.raises(core.TaskError, match='unknown rule'): core.rule_remove(db, 'R1')
+    assert core.playbook_remove(db, 'P1') == {'removed': 'P1', 'detached_rules': ['R2']}
+    assert core.rule_get(db, 'R2')['playbook_id'] is None
+    with pytest.raises(core.TaskError, match='unknown playbook'): core.playbook_remove(db, 'P1')
+    assert server.playbook_remove('P2') == {'removed': 'P2', 'detached_rules': []}
+    assert cli.main(['rules', 'remove', 'R2']) == 0 and '"removed": "R2"' in capsys.readouterr().out
+    assert core.rule_list(db) == [] and core.playbook_list(db) == []

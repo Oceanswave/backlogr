@@ -105,7 +105,7 @@ def task_stale(hours: float = 2) -> dict:
 
 @mcp.tool()
 def task_import(items: list[dict] | dict, actor: str) -> dict:
-    """Bulk create tasks. Each item takes task_create fields except actor (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]."""
+    """Bulk create tasks. items: a list, or an export object {tasks, rules, playbooks}. Each task takes task_create fields except actor (title, owner_bot, source, done_means, due, status, approval_needed, note, created_at) plus optional links [{ref, kind}]. Rules and playbooks are upserted as in rules_import."""
     with closing(_c()) as c:
         return core.bulk_import(c, items, actor)
 
@@ -158,6 +158,18 @@ def playbook_add(id: str, name: str, skill: str = '', test: str = '', descriptio
         return core.playbook_add(c, id=id, name=name, skill=skill, test=test, description=description, rule_ids=rule_ids)
 
 @mcp.tool()
+def rule_remove(id: str) -> dict:
+    """Delete a rule and its playbook links."""
+    with closing(_c()) as c:
+        return core.rule_remove(c, id=id)
+
+@mcp.tool()
+def playbook_remove(id: str) -> dict:
+    """Delete a playbook; its rules are kept, and rules whose primary playbook it was are detached."""
+    with closing(_c()) as c:
+        return core.playbook_remove(c, id=id)
+
+@mcp.tool()
 def rules_import(items: dict, actor: str) -> dict:
     """Atomically import a rules/playbooks object; return created/updated/unchanged counts."""
     with closing(_c()) as c:
@@ -173,7 +185,8 @@ API = {"create": task_create, "update": task_update, "add_link": task_add_link, 
        "flags": task_flags, "stale": task_stale, "waiting": task_waiting, "act": task_act, "import": task_import,
        "export_data": export_data, "rule_list": rule_list, "rule_get": rule_get, "rule_add": rule_add,
        "rule_untested": rule_untested, "playbook_list": playbook_list, "playbook_get": playbook_get,
-       "playbook_add": playbook_add, "rules_import": rules_import,
+       "playbook_add": playbook_add, "rules_import": rules_import, "rule_remove": rule_remove,
+       "playbook_remove": playbook_remove,
        "sean": task_waiting}  # pre-2.0 name of "waiting", kept for older CLI clients
 API_FIELDS = {op: set(inspect.signature(fn).parameters) for op, fn in API.items()}
 MAX_BODY = 1024 * 1024
