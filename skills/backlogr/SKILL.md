@@ -50,6 +50,7 @@ backlogr new "Order sample tee" --owner Mint --source via_coordinator --by Coord
 backlogr approve T-abc123 --by Mint --approver Operator --source "Operator in chat"
 backlogr update T-abc123 --by Mint --status in_progress --note "started"
 backlogr update T-abc123 --by Mint --status blocked --note "needs card"
+backlogr update T-abc123 --by Mint --due none    # clear the due date (MCP/API: due="")
 backlogr update T-abc123 --by Mint --link https://example.com/pr/1 --kind pr
 backlogr update T-abc123 --by Mint --approval yes --status waiting_on_owner --ask "OK to spend \$40 on the sample tee?"
 backlogr done T-abc123 --by Mint --evidence "photo of delivered parcel" --link https://example.com/photo --kind file

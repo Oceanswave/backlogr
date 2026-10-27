@@ -4,7 +4,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 __version__ = "2.0.0"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 def owner():
     return os.environ.get("BACKLOGR_OWNER", "owner")
@@ -84,6 +84,8 @@ def _migrate(c):
         for old, new in LEGACY.items():
             c.execute("UPDATE tasks SET status=? WHERE status=?", (new, old))
             c.execute("UPDATE tasks SET source=? WHERE source=?", (new, old))
+    if c.execute("PRAGMA user_version").fetchone()[0] < 4:
+        c.execute("UPDATE tasks SET due=NULL WHERE due=''")  # pre-2.1 updates stored a cleared due as ''
 
 def now():
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -216,6 +218,7 @@ def create(c, title, owner_bot, source, actor, done_means="", due=None, status="
     if not title or not owner_bot or not actor:
         raise TaskError("title, owner_bot and actor are required")
     status, source = canon(status), canon(source)
+    due = (due or "").strip() or None
     _check(status, source, due, created_at)
     if status == "waiting_on_owner": _need_ask(ask)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
@@ -260,6 +263,8 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
            approved_by=None, approval_source=None, approved_at=None, evidence=None, test_results=None, _attest=False, _extra=None, _expect=None):
     if not actor: raise TaskError("actor is required")
     status = canon(status)
+    clear_due = due is not None and not due.strip()  # "" clears the due date; None leaves it unchanged
+    due = None if clear_due else due
     _check(status, None, due)
     tests = _tests(test_results); evidence = (evidence or "").strip() or None
     # validate and write under one write lock so concurrent updates cannot slip past the gates
@@ -293,6 +298,8 @@ def update(c, tid, actor, status=None, due=None, owner_bot=None, note=None,
         if evidence: changes["evidence"] = evidence; parts.append(f"evidence: {evidence}")
         if tests: changes["test_results"] = json.dumps(tests); parts += _tests_note(tests)
         if entering_wait: changes["waiting_since"] = now()
+        if clear_due and cur["due"] is not None:
+            changes["due"] = None; parts.append(f"due: {cur['due']} -> none")
         if _extra: changes.update(_extra)
         # any update by the owner answers an open question and ends the undo window of a human act
         if not _extra and (actor or "").strip().lower() == cur["owner_bot"].strip().lower():
