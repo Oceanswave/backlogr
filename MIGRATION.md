@@ -147,3 +147,11 @@ the new status and source values. To roll back cleanly, restore the pre-deploy
 backup.
 
 Update installed agent skills from `skills/backlogr/SKILL.md`.
+
+## v2.1.0
+
+No configuration changes. On the first connection, schema version 4 turns any
+`due` stored as an empty string (from an earlier `--due ""` update) into null.
+JSON exports now also contain `rules` and `playbooks`; importing such an export
+upserts them. Older code ignores those keys when importing. A container image is
+published at `ghcr.io/oceanswave/backlogr:2.1.0`; the systemd install is unchanged.

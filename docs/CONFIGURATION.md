@@ -1,4 +1,4 @@
-# Configuration (2.0.0)
+# Configuration (2.1.0)
 
 These are all `BACKLOGR_*` environment variables read by the Python application
 and shipped shell scripts. Defaults below apply when unset; an explicitly empty
