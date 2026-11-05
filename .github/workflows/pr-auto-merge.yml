@@ -20,7 +20,7 @@ jobs:
       pull-requests: write
       checks: read
       statuses: read
-    uses: Oceanswave/github-workflows/.github/workflows/merge.yml@c66e0b30482ce34ccf65025ed85a4d06202c2dd3 # main
+    uses: Oceanswave/github-workflows/.github/workflows/merge.yml@6cdca8dfad892359b266326b6f74ba012418dac4 # main
     with:
       runs-on: '["ubuntu-latest"]'
       head-branch: ${{ github.event.workflow_run.head_branch }}
